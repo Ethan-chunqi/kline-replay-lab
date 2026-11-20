@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f3f6f8" />
+    <title>浪线 WaveLab · K 线训练终端</title>
+    <meta name="description" content="中证、纳指等六大指数模拟交易与历史K线回放训练。" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./journal.css" />
+  </head>
+  <body>
+    <header class="mast">
+      <div class="mast-inner">
+        <a class="brand" href="#terminal" aria-label="WaveLab 训练终端"
+          ><img src="./favicon.svg" alt="" /><span>Wave<span class="brand-light">Lab</span></span></a
+        >
+        <nav aria-label="主导航">
+          <button data-action="terminal" class="nav active"><i data-i="terminal"></i>训练终端</button
+          ><button data-action="journal" class="nav"><i data-i="journal"></i>交易复盘</button>
+        </nav>
+        <div class="mast-actions">
+          <button data-action="help" aria-label="使用指南" class="quiet help">
+            <i data-i="help"></i><span>使用指南</span></button
+          ><button data-action="new" class="primary new"><i data-i="plus"></i>新建训练</button>
+        </div>
+      </div>
+    </header>
+    <main id="terminal">
+      <div class="page-title">
+        <div class="title-row">
+          <h1>训练终端</h1>
+          <div class="mode-badge" id="modeBadge"></div>
+        </div>
+      </div>
+      <section aria-label="市场选择">
+        <div class="section-line">
+          <h2>市场观察</h2>
+          <button class="text-button" data-action="markets">全部市场 <i data-i="market"></i></button>
+        </div>
+        <div class="watchlist" id="watchlist"></div>
+      </section>
+      <div class="workspace">
+        <section class="panel chart-panel" id="chartPanel" aria-label="行情图表">
+          <div class="instrument-row">
+            <div class="instrument-info">
+              <div class="instrument-logo"><i data-i="candles"></i></div>
+              <div>
+                <div class="instrument-title">
+                  <h2 id="instrumentName">中证 1000</h2>
+                  <span id="region" class="region"></span>
+                </div>
+                <div class="instrument-code" id="instrumentCode"></div>
+              </div>
+            </div>
+            <div class="quote"><strong id="quotePrice"></strong><span id="quoteChange"></span></div>
+          </div>
+          <div class="chart-toolbar">
+            <div class="period-buttons" id="periodButtons"></div>
+            <span class="divider"></span><button class="tool" data-action="type" id="chartType"></button
+            ><button class="tool" data-action="indicators"><i data-i="indicator"></i><span>指标</span></button
+            ><span class="flex"></span
+            ><button class="tool icon-only" data-action="fit" title="回到最新" aria-label="回到最新">
+              <i data-i="fit"></i></button
+            ><button class="tool icon-only" data-action="expand" title="展开图表" aria-label="展开图表">
+              <i data-i="expand"></i>
+            </button>
+          </div>
+          <div class="ohlc" id="ohlc"></div>
+          <div class="plot-body">
+            <div class="draw-tools">
+              <button
+                class="tool icon-only active"
+                data-tool="crosshair"
+                title="十字光标"
+                aria-label="十字光标"
+              >
+                <i data-i="cross"></i></button
+              ><button class="tool icon-only" data-tool="trend" title="绘制趋势线" aria-label="绘制趋势线">
+                <i data-i="trend"></i></button
+              ><button
+                class="tool icon-only"
+                data-tool="horizontal"
+                title="绘制水平线"
+                aria-label="绘制水平线"
+              >
+                <i data-i="hline"></i></button
+              ><span></span
+              ><button class="tool icon-only" data-action="clearDraw" title="清除画线" aria-label="清除画线">
+                <i data-i="trash"></i>
+              </button>
+            </div>
+            <div id="plot"></div>
+          </div>
+          <div class="replay">
+            <div class="play-group">
+              <button
+                class="play-btn"
+                data-action="play"
+                id="play"
+                aria-label="播放"
+                title="播放 / 暂停（空格）"
+              ></button
+              ><button class="step-btn" data-action="step" title="前进一根（→）">
+                <i data-i="step"></i><span>下一根</span></button
+              ><select id="speed" aria-label="回放速度">
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+                <option value="4">4×</option>
+                <option value="8">8×</option>
+              </select>
+            </div>
+            <div class="progress-block">
+              <div><span id="replayText"></span><span id="progressNum"></span></div>
+              <progress id="progress" max="100" value="0"></progress>
+            </div>
+          </div>
+        </section>
+        <aside class="panel ticket">
+          <div class="panel-heading">
+            <div>
+              <i data-i="orders"></i>
+              <h2>模拟下单</h2>
+            </div>
+            <span class="currency" id="currency"></span>
+          </div>
+          <div class="ticket-content">
+            <div class="account-label"><span>账户净值</span><i data-i="fund"></i></div>
+            <strong id="equity" class="account-value"></strong>
+            <div class="account-sub">可用资金 <span id="available"></span></div>
+            <div class="sides">
+              <button id="buy" data-side="buy">买入 / 做多</button
+              ><button id="sell" data-side="sell">卖出 / 做空</button>
+            </div>
+            <label class="field"
+              ><span>委托类型</span
+              ><select id="orderType">
+                <option value="market">市价单</option>
+                <option value="limit">限价单</option>
+                <option value="stop">停止单（触发市价）</option>
+                <option value="stopLimit">停止限价单</option>
+              </select></label
+            >
+            <label class="field" id="priceField" hidden
+              ><span id="priceLabel">委托价格</span
+              ><input type="number" id="orderPrice" min="0.000001" step="any" inputmode="decimal"
+            /></label>
+            <label class="field" id="limitField" hidden
+              ><span>执行限价</span
+              ><input type="number" id="limitPrice" min="0.000001" step="any" inputmode="decimal"
+            /></label>
+            <div class="field">
+              <label for="qty">交易数量 <small>单位</small></label>
+              <div class="qty-control">
+                <button data-action="less" aria-label="减少数量"><i data-i="minus"></i></button
+                ><input id="qty" type="number" min="1" step="1" value="1" inputmode="numeric" /><button
+                  data-action="more"
+                  aria-label="增加数量"
+                >
+                  <i data-i="plus"></i>
+                </button>
+              </div>
+              <div class="fractions" id="fractions"></div>
+            </div>
+            <details id="protection">
+              <summary>附加止盈 / 止损<i data-i="chevron"></i></summary>
+              <div class="twocol">
+                <label class="field"
+                  ><span>止盈价</span><input type="number" id="tp" step="any" placeholder="选填" /></label
+                ><label class="field"
+                  ><span>止损价</span><input type="number" id="sl" step="any" placeholder="选填"
+                /></label>
+              </div>
+            </details>
+            <div class="estimate"><span>预计名义金额</span><b id="notional"></b></div>
+            <button class="submit" data-action="submit" id="submitOrder">模拟买入</button>
+            <div class="ticket-foot" id="feeHint"></div>
+          </div>
+        </aside>
+      </div>
+      <section class="panel ledger">
+        <div class="ledger-top">
+          <div id="ledgerTabs"></div>
+          <button class="text-button" data-action="journal">查看复盘 <i data-i="journal"></i></button>
+        </div>
+        <div id="ledgerBody"></div>
+      </section>
+    </main>
+    <main id="journal" hidden></main>
+    <footer>
+      <span><i data-i="lock"></i><span id="saved">训练记录保存在此浏览器</span></span
+      ><span>WaveLab <b> / </b>K 线训练台</span>
+    </footer>
+    <dialog id="dialog">
+      <div class="dialog-head">
+        <h2 id="dialogTitle"></h2>
+        <button data-action="dismiss" class="tool icon-only" aria-label="关闭弹窗">
+          <i data-i="close"></i>
+        </button>
+      </div>
+      <div id="dialogBody"></div>
+    </dialog>
+    <div id="toast" aria-live="polite" role="status"></div>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
