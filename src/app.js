@@ -650,36 +650,42 @@ function renderTicket() {
       ' · 均价 ' +
       number(pos.avgPrice)
     : '当前空仓';
-  elements('contractInfo').hidden = !terms;
+  const marginRate = terms?.marginRate ?? 1;
+  const percent = (rate) => Number((rate * 100).toFixed(2)) + '%';
+  elements('contractInfo').hidden = false;
+  elements('marginRateLabel').textContent = terms ? '开仓保证金率' : '资金占用比例';
+  elements('contractMarginRate').textContent = percent(marginRate);
+  elements('leverageLabel').textContent = terms ? '合约杠杆' : '交易倍数';
+  elements('contractLeverage').textContent = number(1 / marginRate) + '×';
+  elements('accountLeverage').textContent = snap.equity <= 0 && pos.qty ? '—' : number(snap.leverage) + '×';
+  const termsNote = elements('contractTermsNote');
+  termsNote.hidden = !terms;
   if (terms) {
     const meta = s.feed?.contract || terms;
-    elements('contractInfo').innerHTML =
+    const exchangeRate = terms.exchangeMarginRate ?? meta.exchangeMarginRate;
+    const date = meta.marginAsOf || meta.asOf;
+    const source = (url, label) =>
+      url
+        ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(label) + '</a>'
+        : esc(label);
+    termsNote.innerHTML =
       '<strong>' +
       esc(terms.symbol) +
-      ' · 合约杠杆 ' +
-      number(1 / terms.marginRate) +
-      '×</strong><br>每手每点 ' +
-      terms.multiplier +
-      ' 元 · 最小跳动 ' +
-      terms.tickSize +
-      ' 点（' +
+      '</strong> · 每手每点 ' +
+      number(terms.multiplier, 0) +
+      ' 元 · 每跳 ' +
       number(terms.tickSize * terms.multiplier, 0) +
-      ' 元）<br>东财客户参考保证金 ' +
-      number(terms.marginRate * 100, 0) +
-      '% · 交易所 ' +
-      number((terms.exchangeMarginRate || 0.12) * 100, 0) +
-      '%<br>已占保证金 ' +
+      ' 元（' +
+      terms.tickSize +
+      ' 点）<br>' +
+      '已占保证金 ' +
       number(snap.marginUsed) +
-      ' 元 · 账户实际杠杆 ' +
-      number(snap.leverage) +
-      ' 倍' +
-      (meta.marginSourceUrl
-        ? ' · <a href="' +
-          esc(meta.marginSourceUrl) +
-          '" target="_blank" rel="noopener">参数 ' +
-          esc(meta.marginAsOf) +
-          '</a>'
-        : '');
+      ' 元<br>' +
+      source(meta.marginSourceUrl, '东财客户参考标准') +
+      (Number.isFinite(exchangeRate)
+        ? ' · ' + source(meta.exchangeMarginSourceUrl, '交易所参考 ' + percent(exchangeRate))
+        : '') +
+      (date ? ' · ' + esc(date) : '');
   }
   elements('currency').textContent = market.currency;
   elements('buy').classList.toggle('active', side === 'buy');
@@ -1630,6 +1636,15 @@ document.addEventListener('visibilitychange', () => {
 function initChart() {
   chart = createTradingChart(elements('plot'), {
     onHover: (b) => writeOhlc(b || aggregated.at(-1)),
+    onDrawingSelection: (style) => {
+      elements('trendEditor').hidden = !style;
+      if (!style) return;
+      elements('trendColor').value = style.color;
+      elements('trendWidth').value = String(style.width);
+      for (const button of all('[data-trend-color]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.trendColor === style.color.toLowerCase()));
+      }
+    },
     onDrawingChange: (drawings) => {
       if (s) {
         s.drawings[currentDrawingKey()] = drawings;
@@ -1640,6 +1655,20 @@ function initChart() {
     onToolChange: (tool) =>
       all('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool)),
   });
+  elements('trendEditor').addEventListener('click', (event) => {
+    const swatch = event.target.closest('[data-trend-color]');
+    if (swatch) chart.setTrendStyle({ color: swatch.dataset.trendColor });
+  });
+  elements('trendWidth').addEventListener('change', (event) => {
+    chart.setTrendStyle({ width: Number(event.target.value) });
+  });
+  elements('trendColor').addEventListener('input', (event) =>
+    chart.setTrendStyle({ color: event.target.value }),
+  );
+  elements('trendColor').addEventListener('change', (event) =>
+    chart.setTrendStyle({ color: event.target.value }),
+  );
+  elements('deleteTrend').addEventListener('click', () => chart.deleteSelectedTrend());
 }
 try {
   initChart();

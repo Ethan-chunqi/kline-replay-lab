@@ -4,7 +4,6 @@ import {
   createChart,
   createSeriesMarkers,
   CrosshairMode,
-  LineSeries,
   LineStyle,
   TickMarkType,
 } from '../vendor/lightweight-charts/lightweight-charts.min.js';
@@ -124,6 +123,8 @@ export function createTradingChart(container, callbacks = {}) {
   const root = document.createElement('div');
   Object.assign(root.style, { position: 'relative', width: '100%', height: '100%', overflow: 'hidden' });
   root.setAttribute('role', 'img');
+  root.tabIndex = 0;
+  root.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
   let colors = activePalette();
   const initial = chartColors(colors);
   root.setAttribute('aria-label', colors.description);
@@ -147,10 +148,12 @@ export function createTradingChart(container, callbacks = {}) {
       barSpacing: 5.5,
       minBarSpacing: 1.5,
       fixLeftEdge: true,
+      rightBarStaysOnScroll: false,
       tickMarkMaxCharacterLength: 7,
     },
     localization: { locale: 'zh-CN' },
-    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { mouseWheel: true },
+    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
   });
 
   const priceSeries = chart.addSeries(CandlestickSeries, {
@@ -175,59 +178,217 @@ export function createTradingChart(container, callbacks = {}) {
     trendStart = null,
     tool = 'crosshair';
   let priceLevels = [],
-    drawLines = [],
-    drawSeries = [];
-
-  function clearRenderedDrawings() {
-    for (const line of drawLines) priceSeries.removePriceLine(line);
-    for (const item of drawSeries) chart.removeSeries(item);
     drawLines = [];
-    drawSeries = [];
+  let selectedTrend = -1,
+    edit = null,
+    pointerStart = null;
+  let redrawTrends = () => {};
+  const timeAxis = chart.timeScale();
+  const priceAxis = priceSeries.priceScale();
+  let pan = null;
+
+  function inPane(event) {
+    const bounds = root.getBoundingClientRect();
+    const { width, height } = chart.paneSize(0);
+    const x = event.clientX - bounds.left,
+      y = event.clientY - bounds.top;
+    return x >= 0 && x < width && y >= 0 && y < height && !event.target.closest('a');
   }
-  function displayDrawings(force = false) {
-    const valid = drawings.filter((d) => {
-      if (d.type === 'horizontal')
-        return Number.isFinite(d.price) && (!d.time || rowIndex.has(isoKey(d.time)));
-      return (
-        d.type === 'trend' &&
-        d.points?.length === 2 &&
-        d.points.every((p) => Number.isFinite(p.price) && rowIndex.has(isoKey(p.time)))
-      );
-    });
-    const key = JSON.stringify([valid, trendStart]);
-    if (!force && key === drawingKey) return;
-    drawingKey = key;
-    clearRenderedDrawings();
-    for (const d of valid) {
-      if (d.type === 'horizontal') {
-        drawLines.push(
-          priceSeries.createPriceLine({
-            price: d.price,
-            color: colors.drawing,
-            lineWidth: 1,
-            lineStyle: LineStyle.Dashed,
-            title: '水平线',
-          }),
-        );
-      } else {
-        const points = [...d.points].sort(
-          (a, b) => rowIndex.get(isoKey(a.time)) - rowIndex.get(isoKey(b.time)),
-        );
-        if (isoKey(points[0].time) === isoKey(points[1].time)) continue;
-        const line = chart.addSeries(LineSeries, {
-          color: colors.drawing,
-          lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: false,
-          pointMarkersVisible: true,
-          pointMarkersRadius: 2,
-          autoscaleInfoProvider: () => null,
-        });
-        line.setData(points.map((p) => ({ time: p.time, value: p.price })));
-        drawSeries.push(line);
-      }
+  function finishPan() {
+    if (!pan) return;
+    const { id } = pan;
+    pan = null;
+    root.removeAttribute('data-panning');
+    if (root.hasPointerCapture(id)) root.releasePointerCapture(id);
+  }
+  root.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (event.button !== 2 || event.pointerType !== 'mouse' || !ready || !inPane(event)) return;
+      const range = priceAxis.getVisibleRange();
+      const top = priceSeries.coordinateToPrice(0),
+        next = priceSeries.coordinateToPrice(1);
+      if (!range || top == null || next == null) return;
+      event.preventDefault();
+      pointerStart = null;
+      pan = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        offset: timeAxis.scrollPosition(),
+        spacing: timeAxis.options().barSpacing,
+        range,
+        pricePerPixel: top - next,
+        movedY: false,
+      };
+      root.setPointerCapture(event.pointerId);
+      root.setAttribute('data-panning', '');
+      root.focus({ preventScroll: true });
+    },
+    true,
+  );
+  root.addEventListener('pointermove', (event) => {
+    if (!pan || event.pointerId !== pan.id) return;
+    if (!(event.buttons & 2)) return finishPan();
+    const dx = event.clientX - pan.x,
+      dy = event.clientY - pan.y;
+    timeAxis.scrollToPosition(pan.offset - dx / pan.spacing, false);
+    if (Math.abs(dy) >= 3 || pan.movedY) {
+      pan.movedY = true;
+      const shift = dy * pan.pricePerPixel;
+      priceAxis.setVisibleRange({ from: pan.range.from + shift, to: pan.range.to + shift });
     }
+  });
+  for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    root.addEventListener(eventName, (event) => {
+      if (pan?.id === event.pointerId) finishPan();
+    });
+  }
+  root.addEventListener('contextmenu', (event) => {
+    if (pan || (event.button === 2 && inPane(event))) event.preventDefault();
+  });
+  window.addEventListener('blur', finishPan);
+  root.addEventListener('keydown', (event) => {
+    if (event.target !== root || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    zoom(event.key === 'ArrowUp' ? 1.2 : 1 / 1.2);
+  });
+
+  function trendStyle(line) {
+    return {
+      color: /^#[0-9a-f]{6}$/i.test(line.color) ? line.color : colors.drawing,
+      width: Number.isInteger(line.width) && line.width >= 1 && line.width <= 5 ? line.width : 2,
+    };
+  }
+  function screenPoints(line) {
+    if (line?.type !== 'trend' || line.points?.length !== 2) return null;
+    const points = [];
+    for (const p of line.points) {
+      const index = p && rowIndex.get(isoKey(p.time));
+      if (index == null || !Number.isFinite(p.price)) return null;
+      const x = timeAxis.logicalToCoordinate(index),
+        y = priceSeries.priceToCoordinate(p.price);
+      if (x == null || y == null) return null;
+      points.push({ x, y });
+    }
+    return points;
+  }
+  function hitTrend(x, y, radius = 7) {
+    let best = null;
+    for (let i = drawings.length - 1; i >= 0; i--) {
+      const segment = screenPoints(drawings[i]);
+      if (!segment) continue;
+      const [a, b] = segment;
+      const dx = b.x - a.x,
+        dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      const endpoint = segment.findIndex((p) => Math.hypot(x - p.x, y - p.y) <= radius + 1);
+      const distance = Math.hypot(x - a.x - t * dx, y - a.y - t * dy);
+      if (distance > radius + trendStyle(drawings[i]).width / 2) continue;
+      if (endpoint >= 0 && i === selectedTrend) return { index: i, endpoint, distance };
+      if (!best || distance < best.distance) best = { index: i, endpoint, distance };
+    }
+    return best;
+  }
+  // The same chart-native coordinates drive both painting and hit testing.
+  // Trend annotations never add timestamps or change the data's price range.
+  const trendRenderer = {
+    draw(target) {
+      target.useMediaCoordinateSpace(({ context: ctx }) => {
+        drawings.forEach((line, i) => {
+          const pts = screenPoints(line);
+          if (!pts) return;
+          const { color, width } = trendStyle(line);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = width;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          ctx.lineTo(pts[1].x, pts[1].y);
+          ctx.stroke();
+          if (selectedTrend !== i) return;
+          ctx.fillStyle = colors.background;
+          ctx.lineWidth = 2;
+          for (const p of pts) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 4.5 + width / 4, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+          }
+        });
+      });
+    },
+  };
+  const trendViews = [{ zOrder: () => 'top', renderer: () => trendRenderer }];
+  priceSeries.attachPrimitive({
+    attached({ requestUpdate }) {
+      redrawTrends = requestUpdate;
+    },
+    paneViews: () => trendViews,
+    hitTest(x, y) {
+      const hit = tool === 'crosshair' && hitTrend(x, y);
+      if (!hit) return null;
+      return {
+        externalId: 'trend-' + hit.index,
+        zOrder: 'top',
+        distance: hit.distance,
+        cursorStyle: hit.endpoint >= 0 ? 'crosshair' : 'move',
+      };
+    },
+  });
+  function selectTrend(index) {
+    if (index === selectedTrend) return;
+    selectedTrend = index;
+    callbacks.onDrawingSelection?.(index >= 0 ? trendStyle(drawings[index]) : null);
+    redrawTrends();
+  }
+  function setTrendStyle(style) {
+    const line = drawings[selectedTrend];
+    if (!line || !style) return false;
+    const { color, width } = style;
+    let changed = false;
+    if (/^#[0-9a-f]{6}$/i.test(color) && line.color !== color) {
+      line.color = color;
+      changed = true;
+    }
+    if (Number.isInteger(width) && width >= 1 && width <= 5 && line.width !== width) {
+      line.width = width;
+      changed = true;
+    }
+    if (changed) {
+      redrawTrends();
+      callbacks.onDrawingSelection?.(trendStyle(line));
+      callbacks.onDrawingChange?.(getDrawings());
+    }
+    return changed;
+  }
+  function deleteSelectedTrend() {
+    if (selectedTrend < 0) return false;
+    finishEdit(false);
+    drawings.splice(selectedTrend, 1);
+    selectTrend(-1);
+    callbacks.onDrawingChange?.(getDrawings());
+    return true;
+  }
+  function displayDrawings() {
+    redrawTrends();
+    const valid = drawings.filter(
+      (d) => d.type === 'horizontal' && Number.isFinite(d.price) && (!d.time || rowIndex.has(isoKey(d.time))),
+    );
+    const key = JSON.stringify([valid, trendStart]);
+    if (key === drawingKey) return;
+    drawingKey = key;
+    for (const line of drawLines) priceSeries.removePriceLine(line);
+    drawLines = valid.map((d) =>
+      priceSeries.createPriceLine({
+        price: d.price,
+        color: colors.drawing,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        title: '水平线',
+      }),
+    );
     if (trendStart && rowIndex.has(isoKey(trendStart.time))) {
       drawLines.push(
         priceSeries.createPriceLine({
@@ -286,7 +447,8 @@ export function createTradingChart(container, callbacks = {}) {
     lastPriceColor = last && last.close < last.open ? colors.down : colors.up;
     priceSeries.applyOptions({ ...candleColors(colors), priceLineColor: lastPriceColor });
     for (const line of drawLines) line.applyOptions({ color: colors.drawing });
-    for (const line of drawSeries) line.applyOptions({ color: colors.drawing });
+    redrawTrends();
+    if (selectedTrend >= 0) callbacks.onDrawingSelection?.(trendStyle(drawings[selectedTrend]));
     levelsKey = undefined;
     displayLevels(options.levels);
     renderMarkers();
@@ -294,6 +456,7 @@ export function createTradingChart(container, callbacks = {}) {
   document.addEventListener('wavelab-theme', applyTheme);
 
   function resetView() {
+    finishPan();
     if (!bars.length) return;
     const mobile = root.clientWidth < 550;
     const count = Math.max(
@@ -317,15 +480,21 @@ export function createTradingChart(container, callbacks = {}) {
     const distanceFromEdge = prevRange ? bars.length - 1 - prevRange.to : 0;
     const changedMarket = activeMarket !== marketKey;
     if (changedMarket) {
+      finishEdit(false);
+      selectTrend(-1);
       drawings = [];
       trendStart = null;
       drawingKey = levelsKey = undefined;
       activeMarket = marketKey;
     }
-    if (Array.isArray(next.drawings)) drawings = next.drawings.map((d) => structuredClone(d));
+    if (!edit && Array.isArray(next.drawings)) drawings = structuredClone(next.drawings);
     ready = false;
     bars = visibleBars;
     rowIndex = new Map(bars.map((bar, i) => [isoKey(bar.time), i]));
+    if (selectedTrend >= 0 && !drawings[selectedTrend]?.points?.every((p) => rowIndex.has(isoKey(p.time)))) {
+      finishEdit(false);
+      selectTrend(-1);
+    }
     const key = [options.precision, options.timeZone, typeof bars[0]?.time].join('|');
     if (displayKey !== key) {
       displayKey = key;
@@ -360,6 +529,8 @@ export function createTradingChart(container, callbacks = {}) {
   }
 
   function setTool(next) {
+    finishEdit(false);
+    selectTrend(-1);
     tool = ['trend', 'horizontal'].includes(next) ? next : 'crosshair';
     trendStart = null;
     chart.applyOptions({ handleScroll: { pressedMouseMove: tool === 'crosshair' } });
@@ -370,12 +541,103 @@ export function createTradingChart(container, callbacks = {}) {
     return structuredClone(drawings);
   }
   function clearDrawings() {
-    drawings = [];
     setTool('crosshair');
+    drawings = [];
+    displayDrawings();
     callbacks.onDrawingChange?.(getDrawings());
   }
-  let pointerStart = null;
+  function finishEdit(commit) {
+    if (!edit) return;
+    const { id, index, original, moved } = edit;
+    edit = null;
+    if (root.hasPointerCapture(id)) root.releasePointerCapture(id);
+    if (!moved || !drawings[index]) return;
+    if (commit) callbacks.onDrawingChange?.(getDrawings());
+    else drawings[index].points = original;
+    redrawTrends();
+  }
+  const cancelEdit = () => finishEdit(false);
+  window.addEventListener('blur', cancelEdit);
+  root.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (!event.isPrimary || event.button !== 0 || !ready || tool !== 'crosshair' || !inPane(event)) return;
+      const bounds = root.getBoundingClientRect();
+      const x = event.clientX - bounds.left,
+        y = event.clientY - bounds.top;
+      const hit = hitTrend(x, y, event.pointerType === 'touch' ? 14 : 7);
+      selectTrend(hit ? hit.index : -1);
+      if (!hit) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pointerStart = null;
+      root.focus({ preventScroll: true });
+      root.setPointerCapture(event.pointerId);
+      edit = {
+        id: event.pointerId,
+        index: hit.index,
+        endpoint: hit.endpoint,
+        x,
+        y,
+        moved: false,
+        original: structuredClone(drawings[hit.index].points),
+      };
+    },
+    true,
+  );
+  for (const eventName of ['touchstart', 'touchmove']) {
+    root.addEventListener(
+      eventName,
+      (event) => {
+        if (!edit) return;
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+      },
+      { capture: true, passive: false },
+    );
+  }
+  root.addEventListener('pointermove', (event) => {
+    if (!edit || edit.id !== event.pointerId) return;
+    const bounds = root.getBoundingClientRect();
+    const x = event.clientX - bounds.left,
+      y = event.clientY - bounds.top;
+    if (!edit.moved && Math.hypot(x - edit.x, y - edit.y) < 3) return;
+    const indices = edit.original.map((p) => rowIndex.get(isoKey(p.time)));
+    if (indices.some((i) => i == null)) return finishEdit(false);
+    const moving = edit.endpoint < 0 ? [0, 1] : [edit.endpoint];
+    const minIndex = Math.min(...moving.map((i) => indices[i]));
+    const maxIndex = Math.max(...moving.map((i) => indices[i]));
+    let shift = Math.round((x - edit.x) / timeAxis.options().barSpacing);
+    shift = Math.max(-minIndex, Math.min(bars.length - 1 - maxIndex, shift));
+    // Keep distinct time anchors when one handle is dragged through the other.
+    if (edit.endpoint >= 0 && indices[edit.endpoint] + shift === indices[1 - edit.endpoint]) {
+      shift -= Math.sign(shift);
+    }
+    const height = chart.paneSize(0).height;
+    const startPrice = priceSeries.coordinateToPrice(edit.y);
+    const endPrice = priceSeries.coordinateToPrice(Math.max(0, Math.min(y, height - 1)));
+    if (startPrice == null || endPrice == null) return;
+    const deltaPrice = endPrice - startPrice;
+    const line = drawings[edit.index];
+    line.points = edit.original.map((p, i) =>
+      moving.includes(i)
+        ? {
+            time: bars[indices[i] + shift].time,
+            price: Number((p.price + deltaPrice).toFixed(options.precision)),
+          }
+        : p,
+    );
+    edit.moved = true;
+    redrawTrends();
+  });
+  for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    root.addEventListener(eventName, (event) => {
+      if (edit?.id === event.pointerId) finishEdit(eventName === 'pointerup');
+    });
+  }
   root.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button === 0 && inPane(event))
+      root.focus({ preventScroll: true });
     pointerStart =
       event.isPrimary && event.button === 0
         ? { x: event.clientX, y: event.clientY, id: event.pointerId }
@@ -387,7 +649,14 @@ export function createTradingChart(container, callbacks = {}) {
   root.addEventListener('pointerup', (event) => {
     const start = pointerStart;
     pointerStart = null;
-    if (tool === 'crosshair' || !start || start.id !== event.pointerId || event.target.closest('a')) return;
+    if (
+      tool === 'crosshair' ||
+      event.button !== 0 ||
+      !start ||
+      start.id !== event.pointerId ||
+      event.target.closest('a')
+    )
+      return;
     if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 7) return;
     const bounds = root.getBoundingClientRect();
     const x = event.clientX - bounds.left,
@@ -409,7 +678,9 @@ export function createTradingChart(container, callbacks = {}) {
       if (isoKey(point.time) === isoKey(trendStart.time)) return;
       drawings.push({ type: 'trend', points: [trendStart, point] });
     }
+    const addedTrend = tool === 'trend';
     setTool('crosshair');
+    if (addedTrend) selectTrend(drawings.length - 1);
     callbacks.onDrawingChange?.(getDrawings());
   });
   chart.subscribeCrosshairMove((event) => {
@@ -428,16 +699,31 @@ export function createTradingChart(container, callbacks = {}) {
     const current = chart.timeScale().getVisibleLogicalRange();
     if (!current || !Number.isFinite(factor) || factor <= 0) return;
     const width = Math.max(9, Math.min(bars.length + 10, (current.to - current.from) / factor));
-    chart.timeScale().setVisibleLogicalRange({ from: current.to - width, to: current.to });
+    const center = (current.from + current.to) / 2;
+    chart.timeScale().setVisibleLogicalRange({ from: center - width / 2, to: center + width / 2 });
   }
   function destroy() {
     if (destroyed) return;
     destroyed = true;
     ready = false;
+    finishPan();
+    finishEdit(false);
+    window.removeEventListener('blur', cancelEdit);
+    window.removeEventListener('blur', finishPan);
     document.removeEventListener('wavelab-theme', applyTheme);
     observer.disconnect();
     chart.remove();
     root.remove();
   }
-  return { update, resetView, zoom, setTool, clearDrawings, getDrawings, destroy };
+  return {
+    update,
+    resetView,
+    zoom,
+    setTool,
+    clearDrawings,
+    getDrawings,
+    setTrendStyle,
+    deleteSelectedTrend,
+    destroy,
+  };
 }

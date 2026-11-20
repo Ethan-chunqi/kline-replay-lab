@@ -1470,9 +1470,29 @@ dialog::backdrop {
 .contract-info {
   background: #f4f8fa;
   border-radius: 5px;
-  padding: 6px 8px;
+  padding: 10px;
   margin-top: 9px;
   line-height: 1.6;
+}
+.risk-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.risk-metrics dt {
+  font-size: 12px;
+}
+.risk-metrics dd {
+  margin: 2px 0 0;
+  font: 650 18px/1.25 var(--mono);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.contract-terms {
+  border-top: 1px solid var(--line);
+  padding-top: 7px;
+  margin-top: 8px;
 }
 .contract-info a,
 .feed-meta a {
@@ -1809,4 +1829,63 @@ html[data-theme='dark'] #toast {
   color: #ffd8b5;
   border-color: var(--accent-line);
   box-shadow: 0 8px 30px rgb(0 0 0 / 35%);
+}
+#plot [data-panning],
+#plot [data-panning] * {
+  cursor: grabbing !important;
+}
+.trend-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 12px;
+  background: var(--surface2);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+.trend-editor strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.trend-swatches,
+.trend-width {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.trend-swatches button {
+  width: 25px;
+  height: 25px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+}
+.trend-swatches button::before {
+  display: block;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--swatch);
+  content: '';
+}
+.trend-swatches button[aria-pressed='true'] {
+  border-color: var(--ink);
+}
+#trendColor {
+  width: 28px;
+  height: 25px;
+  padding: 2px;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.trend-width select {
+  width: auto;
+  padding: 3px 22px 3px 6px;
+  font: 13px var(--mono);
+  background-position: right 3px center;
+}
+@media (hover: none), (max-width: 900px) {
+  .mouse-guide { display: none; }
 }

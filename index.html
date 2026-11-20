@@ -79,7 +79,7 @@
           </div>
           <div class="chart-readings">
             <div class="ohlc" id="ohlc"></div>
-            <span class="chart-convention">红涨 · 绿跌</span>
+            <span class="chart-convention"><span class="mouse-guide">滚轮缩放 · 右键拖动　</span>红涨 · 绿跌</span>
           </div>
           <div class="plot-body">
             <div class="draw-tools">
@@ -110,6 +110,22 @@
             <span>画线</span><button data-tool="trend"><i data-i="trend"></i>趋势线</button
             ><button data-tool="horizontal"><i data-i="hline"></i>水平线</button
             ><button data-action="undoDraw">撤销上一条</button><small id="drawingCount"></small>
+          </div>
+          <div id="trendEditor" class="trend-editor" role="group" aria-label="所选趋势线样式" hidden>
+            <strong>所选趋势线</strong>
+            <div class="trend-swatches" role="group" aria-label="线条颜色">
+              <button type="button" data-trend-color="#ff5553" aria-label="红色" title="红色" style="--swatch:#ff5553"></button>
+              <button type="button" data-trend-color="#41bf88" aria-label="绿色" title="绿色" style="--swatch:#41bf88"></button>
+              <button type="button" data-trend-color="#589bff" aria-label="蓝色" title="蓝色" style="--swatch:#589bff"></button>
+              <button type="button" data-trend-color="#e9b84f" aria-label="金色" title="金色" style="--swatch:#e9b84f"></button>
+              <input id="trendColor" type="color" aria-label="自定义趋势线颜色" title="自定义颜色" />
+            </div>
+            <label class="trend-width">粗细
+              <select id="trendWidth" aria-label="趋势线粗细">
+                <option value="1">1 px</option><option value="2">2 px</option><option value="3">3 px</option><option value="4">4 px</option><option value="5">5 px</option>
+              </select>
+            </label>
+            <button type="button" id="deleteTrend" class="tool icon-only" aria-label="删除选中趋势线" title="删除此线"><i data-i="trash"></i></button>
           </div>
           <div class="replay">
             <div class="play-group">
@@ -166,7 +182,14 @@
               <span id="positionSummary">空仓</span
               ><button id="quickClose" class="flatten" data-action="closePosition" disabled>一键平仓</button>
             </div>
-            <div id="contractInfo" class="contract-info" hidden></div>
+            <section id="contractInfo" class="contract-info" aria-label="保证金与杠杆" hidden>
+              <dl class="risk-metrics">
+                <div><dt id="marginRateLabel">开仓保证金率</dt><dd id="contractMarginRate"></dd></div>
+                <div><dt id="leverageLabel">合约杠杆</dt><dd id="contractLeverage"></dd></div>
+                <div><dt title="持仓名义金额 ÷ 账户净值">账户实际杠杆</dt><dd id="accountLeverage"></dd></div>
+              </dl>
+              <div id="contractTermsNote" class="contract-terms"></div>
+            </section>
             <div class="sides">
               <button id="buy" data-side="buy">买入 / 做多</button
               ><button id="sell" data-side="sell">卖出 / 做空</button>
