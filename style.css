@@ -1597,3 +1597,216 @@ dialog::backdrop {
     gap: 4px;
   }
 }
+
+#themeSwitch {
+  flex: none;
+  white-space: nowrap;
+}
+#themeSwitch svg {
+  width: 17px;
+  height: 17px;
+}
+@media (max-width: 800px) {
+  #themeSwitch {
+    width: 28px;
+    height: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+  #themeSwitch span {
+    display: none;
+  }
+}
+@media (max-width: 410px) {
+  .mast-inner {
+    gap: 7px;
+    padding-inline: 8px;
+  }
+  .mast .brand {
+    gap: 4px;
+    font-size: 18px;
+  }
+  .mast .brand img {
+    width: 24px;
+    height: 24px;
+  }
+  .mast nav {
+    gap: 6px;
+  }
+  .mast .new i {
+    display: none;
+  }
+}
+@media (max-width: 374px) {
+  .mast .brand {
+    width: 33px;
+    height: 36px;
+    justify-content: center;
+  }
+  .mast .brand > span {
+    display: none;
+  }
+  .mast .help,
+  #themeSwitch {
+    width: 30px;
+    height: 34px;
+    justify-content: center;
+  }
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #1c1c1c;
+  --surface: #222222;
+  --surface2: #2c2c2c;
+  --line: #424242;
+  --soft: #373737;
+  --muted: #b6b4b0;
+  --ink: #f1f0ed;
+  --accent: #ff973d;
+  --accent-soft: #3a2c22;
+  --accent-line: #986035;
+  --rise: #ff6667;
+  --fall: #50cb91;
+  --rise-soft: #45292a;
+  --fall-soft: #22392d;
+  --field: #1b1b1b;
+  --mint: var(--accent);
+  --red: var(--rise);
+}
+html[data-theme='dark'] .mast {
+  background: #303030;
+}
+html[data-theme='dark'] .brand img {
+  filter: sepia(1) saturate(3.2) hue-rotate(338deg);
+}
+html[data-theme='dark'] :is(.market-card, .panel) {
+  border-radius: 6px;
+  box-shadow: none;
+}
+html[data-theme='dark'] :is(.section-line h2, footer, footer b) {
+  color: var(--muted);
+}
+html[data-theme='dark'] :is(.market-card:hover, .tool:hover, .quiet:hover, .market-opt:hover, .pencil-row button:enabled:hover, .period-buttons button:enabled:hover) {
+  background: var(--surface2);
+  color: var(--ink);
+}
+html[data-theme='dark'] .market-card:hover {
+  border-color: #696969;
+}
+html[data-theme='dark'] :is(.market-card.selected, .market-opt.selected, .instrument-logo, .mode-badge) {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+html[data-theme='dark'] .mode-badge {
+  color: var(--accent);
+}
+html[data-theme='dark'] :is(.region, .currency, .counter) {
+  border-color: var(--line);
+  background: var(--surface2);
+  color: var(--muted);
+}
+html[data-theme='dark'] :is(.ohlc b, .account-sub span, .estimate b) {
+  color: var(--ink);
+}
+html[data-theme='dark'] :is(.chart-readings, .draw-tools, #plot) {
+  background: #191919;
+}
+html[data-theme='dark'] :is(.tool.active, .period-buttons button.active, .pencil-row button.active) {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+html[data-theme='dark'] .chart-panel.expanded {
+  box-shadow: 0 0 0 100vmax rgb(17 17 17 / 96%);
+}
+html[data-theme='dark'] :is(.primary, .play-btn) {
+  background: var(--accent);
+  color: #211508 !important;
+}
+html[data-theme='dark'] :is(.primary, .play-btn):enabled:hover {
+  background: #ffac69;
+}
+html[data-theme='dark'] :is(.today-btn, .random-btn, .flatten:enabled) {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+html[data-theme='dark'] :is(.today-btn, .random-btn, .flatten):enabled:hover {
+  color: #ffbb80;
+  background: #4a3425;
+  border-color: var(--accent);
+}
+html[data-theme='dark'] .flatten:disabled {
+  color: #a5a19c;
+  background: var(--surface2);
+  border-color: var(--line);
+}
+html[data-theme='dark'] :is(select, input, textarea, .qty-control, .step-btn, .dialog-copy kbd) {
+  color: var(--ink);
+  background-color: var(--field);
+  border-color: #555452;
+}
+html[data-theme='dark'] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath d='m3.5 5.5 3.5 3.5 3.5-3.5' fill='none' stroke='%23b6b4b0' stroke-width='1.4'/%3E%3C/svg%3E");
+}
+html[data-theme='dark'] .qty-control input {
+  background: var(--field);
+}
+html[data-theme='dark'] :is(.step-btn:hover, .qty-control button, .contract-info, .sides) {
+  background: var(--surface2);
+}
+html[data-theme='dark'] .qty-control button:hover {
+  background: var(--line);
+}
+html[data-theme='dark'] :is(.contract-info, .feed-meta) a {
+  color: var(--accent);
+}
+html[data-theme='dark'] progress,
+html[data-theme='dark'] progress::-webkit-progress-bar {
+  background: var(--line);
+}
+html[data-theme='dark'] .positive {
+  color: var(--rise) !important;
+}
+html[data-theme='dark'] .negative {
+  color: var(--fall) !important;
+}
+html[data-theme='dark'] .buy-sem {
+  color: var(--rise);
+}
+html[data-theme='dark'] .sides button.active[data-side='buy'] {
+  color: var(--rise);
+  background: var(--rise-soft);
+}
+html[data-theme='dark'] .sides button.active[data-side='sell'] {
+  color: var(--fall);
+  background: var(--fall-soft);
+}
+html[data-theme='dark'] .submit {
+  background: var(--rise);
+  color: #231111 !important;
+}
+html[data-theme='dark'] .submit:enabled:hover {
+  background: #ff8584;
+}
+html[data-theme='dark'] .submit.sell {
+  background: var(--fall);
+  color: #0e2013 !important;
+}
+html[data-theme='dark'] .submit.sell:enabled:hover {
+  background: #73dea9;
+}
+html[data-theme='dark'] dialog {
+  background: var(--surface);
+  border-color: #565451;
+  box-shadow: 0 20px 80px rgb(0 0 0 / 50%);
+}
+html[data-theme='dark'] dialog::backdrop {
+  background: rgb(8 8 8 / 68%);
+}
+html[data-theme='dark'] #toast {
+  background: #352a20;
+  color: #ffd8b5;
+  border-color: var(--accent-line);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 35%);
+}

@@ -1,43 +1,59 @@
-// The mark and contract details always belong to Eastmoney. If its history
-// feed is sparse, obtain candles for the same dated contract and disclose their source.
+// Execution marks for the live board always come from Eastmoney. A historical
+// replay can run entirely from verified candles for the requested instrument.
 import { fetchEastmoneyBars, fetchEastmoneyQuote } from './eastmoney.js';
 import { fetchSecondaryHistory } from './secondary-history.js';
+import { fetchIndexHistory } from './index-history.js';
+import { MARKETS } from './market.js';
+
+const minutes = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1H': 60 };
+
+function availableAtQuote(bar, base, quote, market) {
+  if (typeof bar.time === 'number') return (bar.endTime ?? bar.time + minutes[base] * 60) <= quote.time;
+  if (bar.time !== quote.tradeDate) return bar.time < quote.tradeDate;
+  const hour = new Intl.DateTimeFormat('en-GB', {
+    timeZone: market.timeZone,
+    hour: '2-digit',
+    hourCycle: 'h23',
+  }).format(quote.time * 1000);
+  return Number(hour) >= (market.region === 'A股' ? 15 : 16);
+}
 
 export async function loadChartFeed(marketId, base, options = {}) {
   let primary, reason;
   try {
     primary = await fetchEastmoneyBars(marketId, base, options);
-    if (primary.bars.length >= 30 || !primary.contract) return { ...primary, historySource: '东方财富' };
+    if (primary.bars.length >= 30) return { ...primary, historySource: '东方财富' };
   } catch (err) {
     reason = err;
   }
-  if (options.contract && options.contract !== 'index' && ['1m', '5m', '15m', '30m', '1H'].includes(base)) {
-    try {
-      const quote = primary?.quote || (await fetchEastmoneyQuote(marketId, options));
-      if (!quote.contract || !/^(IM|IC|IF)\d{4}$/.test(quote.symbol)) throw Error('缺少具体合约');
-      const secondary = await fetchSecondaryHistory(marketId, quote.symbol, base);
-      const seconds = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1H': 3600 }[base];
-      const bars = secondary.bars.filter((b) =>
-        typeof b.time === 'number' ? b.time + seconds <= quote.time : b.time <= quote.tradeDate,
-      );
-      if (bars.length >= 30) {
-        return {
-          bars: bars.slice(-(options.limit || 720)),
-          quote,
-          symbol: quote.symbol,
-          name: quote.name,
-          secid: quote.secid,
-          quoteUrl: quote.quoteUrl,
-          tradeDate: quote.tradeDate,
-          asOf: quote.time,
-          contract: quote.contract,
-          sourceUrl: secondary.sourceUrl,
-          historySource: '新浪财经',
-        };
-      }
-    } catch (err) {
-      reason ||= err;
+  const isIndex = !options.contract || options.contract === 'index';
+  const market = MARKETS.find((m) => m.id === marketId);
+  try {
+    let quote = primary?.quote;
+    if (!quote && (!isIndex || !options.historyOnly)) quote = await fetchEastmoneyQuote(marketId, options);
+    const fallback = isIndex
+      ? await fetchIndexHistory(marketId, base, { signal: options.signal })
+      : await fetchSecondaryHistory(marketId, quote.symbol, base, { signal: options.signal });
+    const available = quote
+      ? fallback.bars.filter((bar) => availableAtQuote(bar, base, quote, market))
+      : fallback.bars;
+    if (available.length >= 30) {
+      return {
+        bars: available.slice(-(options.limit || 720)),
+        quote,
+        symbol: quote?.symbol || market.symbol,
+        name: quote?.name || market.name,
+        secid: quote?.secid,
+        quoteUrl: quote?.quoteUrl || fallback.sourceUrl,
+        tradeDate: quote?.tradeDate || (base === '1D' ? available.at(-1).time : undefined),
+        asOf: quote?.time || fallback.asOf,
+        contract: quote?.contract || null,
+        sourceUrl: fallback.sourceUrl,
+        historySource: fallback.historySource,
+      };
     }
+  } catch (err) {
+    reason ||= err;
   }
   if (primary) return { ...primary, historySource: '东方财富' };
   throw reason || Error('此周期的历史行情暂不可用。');

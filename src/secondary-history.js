@@ -1,9 +1,12 @@
-// Sina's public dated-contract intraday history. Execution quotes still come from the quote provider.
+// Sina's public dated-contract daily and intraday history. Execution quotes still come from the quote provider.
 const host = 'https://stock2.finance.sina.com.cn';
 const prefixes = { csi1000: 'IM', csi500: 'IC', csi300: 'IF' };
 const durations = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, '1H': 60 };
 
-function loadPublicRows(url, signal) {
+const publicHosts = new Set([host, 'https://stock.finance.sina.com.cn', 'https://money.finance.sina.com.cn']);
+export function loadPublicRows(url, signal) {
+  const origin = new URL(url).origin;
+  if (!publicHosts.has(origin)) throw new Error('行情来源无效');
   return new Promise((resolve, reject) => {
     const frame = document.createElement('iframe');
     frame.hidden = true;
@@ -28,20 +31,19 @@ function loadPublicRows(url, signal) {
     function receive(event) {
       if (event.origin !== 'null' || event.source !== frame.contentWindow || event.data?.token !== token)
         return;
-      if (!Array.isArray(event.data.rows))
-        return finish(reject, new Error('新浪财经未返回该月份合约的分钟行情'));
+      if (!Array.isArray(event.data.rows)) return finish(reject, new Error('新浪财经未返回该标的的历史行情'));
       finish(resolve, event.data.rows);
     }
     if (signal?.aborted) return cancel();
     window.addEventListener('message', receive);
     signal?.addEventListener('abort', cancel, { once: true });
-    timeout = setTimeout(() => finish(reject, new Error('新浪财经分钟行情请求超时')), 8500);
+    timeout = setTimeout(() => finish(reject, new Error('新浪财经历史行情请求超时')), 8500);
     // Only this isolated, opaque-origin document executes the provider's JSONP.
     frame.srcdoc =
       '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'nonce-' +
       token +
       "' " +
-      host +
+      origin +
       "; base-uri 'none'; form-action 'none'\">" +
       '<script referrerpolicy="no-referrer" src="' +
       url.replaceAll('&', '&amp;') +
@@ -55,24 +57,26 @@ function loadPublicRows(url, signal) {
   });
 }
 
-function parseRows(rows, minutes) {
+function barTime(stamp, minutes) {
+  const match = (minutes ? /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):00$/ : /^(\d{4}-\d{2}-\d{2})$/).exec(stamp);
+  if (!match) throw new Error('新浪财经返回的 K 线时间无效');
+  const day = Date.parse(match[1] + 'T00:00:00Z');
+  if (!Number.isFinite(day) || new Date(day).toISOString().slice(0, 10) !== match[1])
+    throw new Error('新浪财经返回的交易日期无效');
+  if (!minutes) return match[1];
+  const minute = Number(match[2]) * 60 + Number(match[3]);
+  const sessionStart = minute > 780 && minute <= 900 ? 780 : 570;
+  const validSession = (minute > 570 && minute <= 690) || (minute > 780 && minute <= 900);
+  if (!validSession || (minute - sessionStart) % minutes !== 0)
+    throw new Error('新浪财经返回了无法对应交易时段的 K 线');
+  return day / 1000 + (minute - 480 - minutes) * 60;
+}
+
+export function parseRows(rows, minutes, readTime = barTime) {
   if (!rows.length || rows.length > 10000) throw new Error('新浪财经返回的 K 线数量无效');
-  let previous = 0;
+  let previous = null;
   return rows.map((row) => {
-    const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):00$/.exec(row?.d);
-    if (!match) throw new Error('新浪财经返回的分钟 K 线时间无效');
-    const day = Date.parse(match[1] + 'T00:00:00Z');
-    const minute = Number(match[2]) * 60 + Number(match[3]);
-    const sessionStart = minute > 780 && minute <= 900 ? 780 : 570;
-    const validSession = (minute > 570 && minute <= 690) || (minute > 780 && minute <= 900);
-    if (
-      !Number.isFinite(day) ||
-      new Date(day).toISOString().slice(0, 10) !== match[1] ||
-      !validSession ||
-      (minute - sessionStart) % minutes !== 0
-    )
-      throw new Error('新浪财经返回了无法对应中金所交易时段的 K 线');
-    const time = day / 1000 + (minute - 480 - minutes) * 60;
+    const time = readTime(row?.d, minutes);
     const values = ['o', 'h', 'l', 'c', 'v'].map((key) =>
       row[key] === '' || row[key] == null ? NaN : Number(row[key]),
     );
@@ -83,7 +87,7 @@ function parseRows(rows, minutes) {
       low > Math.min(open, close) ||
       high < Math.max(open, close) ||
       volume < 0 ||
-      time <= previous
+      (previous !== null && time <= previous)
     )
       throw new Error('新浪财经返回的价格、交易量或时间顺序无效');
     previous = time;
@@ -96,14 +100,15 @@ export async function fetchSecondaryHistory(marketId, symbol, base, { signal } =
   const monthly = /^(IM|IC|IF)\d{2}(0[1-9]|1[0-2])$/.exec(symbol);
   if (!prefix || !monthly || monthly[1] !== prefix)
     throw new Error('新浪备用行情只支持与标的相符的中金所具体月份合约');
-  const minutes = durations[base];
-  if (!minutes) throw new Error('新浪备用行情仅提供 1、5、15、30、60 分钟 K 线');
+  const minutes = base === '1D' ? 0 : durations[base];
+  if (!Number.isInteger(minutes)) throw new Error('新浪备用行情支持日线及 1、5、15、30、60 分钟 K 线');
+  const method = minutes ? 'getFewMinLine' : 'getDailyKLine';
   const endpoint = new URL(
-    '/futures/api/jsonp.php/var%20wavelabCffexRows=/InnerFuturesNewService.getFewMinLine',
+    '/futures/api/jsonp.php/var%20wavelabCffexRows=/InnerFuturesNewService.' + method,
     host,
   );
   endpoint.searchParams.set('symbol', symbol);
-  endpoint.searchParams.set('type', String(minutes));
+  if (minutes) endpoint.searchParams.set('type', String(minutes));
   const bars = parseRows(await loadPublicRows(endpoint.href, signal), minutes);
   const sourceUrl = 'https://finance.sina.com.cn/futures/quotes/' + symbol + '.shtml';
   return {
@@ -114,6 +119,6 @@ export async function fetchSecondaryHistory(marketId, symbol, base, { signal } =
     sourceUrl,
     historySourceUrl: sourceUrl,
     dataUrl: endpoint.href,
-    asOf: bars.at(-1).time + minutes * 60,
+    asOf: minutes ? bars.at(-1).time + minutes * 60 : Date.parse(bars.at(-1).time + 'T15:00:00+08:00') / 1000,
   };
 }

@@ -9,15 +9,74 @@ import {
   TickMarkType,
 } from '../vendor/lightweight-charts/lightweight-charts.min.js';
 
-const COLORS = {
-  background: '#ffffff',
-  grid: '#e5ebee',
-  axis: '#536477',
-  border: '#d7e1e4',
-  up: '#c53342',
-  down: '#128061',
-  drawing: '#17787f',
+const PALETTES = {
+  light: {
+    background: '#ffffff',
+    grid: '#e5ebee',
+    axis: '#536477',
+    border: '#d7e1e4',
+    up: '#c53342',
+    upBody: '#ffffff',
+    down: '#128061',
+    drawing: '#17787f',
+    crosshair: '#708597',
+    crosshairLabel: '#536477',
+    buy: '#b32c3a',
+    sell: '#096b53',
+    level: '#456b99',
+    levelColors: {},
+    description: '蜡烛图，红色空心为上涨，绿色实心为下跌，可缩放查看行情',
+  },
+  dark: {
+    background: '#191919',
+    grid: '#333333',
+    axis: '#999999',
+    border: '#333333',
+    up: '#ff3d3b',
+    upBody: '#ff3d3b',
+    down: '#43bc7c',
+    drawing: '#e5443c',
+    crosshair: '#888888',
+    crosshairLabel: '#4d4d4d',
+    buy: '#ff6461',
+    sell: '#60d294',
+    level: '#9caec7',
+    levelColors: {
+      '#a96813': '#e4b85f',
+      '#00876c': '#43bc7c',
+      '#c44360': '#ff6461',
+      '#5d6b9b': '#aaa1d7',
+      '#526f89': '#91a9c3',
+    },
+    description: '蜡烛图，红色实心为上涨，绿色实心为下跌，可缩放查看行情',
+  },
 };
+function activePalette() {
+  return document.documentElement.dataset.theme === 'light' ? PALETTES.light : PALETTES.dark;
+}
+function chartColors(colors) {
+  const crosshairLine = {
+    color: colors.crosshair,
+    style: LineStyle.Dashed,
+    labelBackgroundColor: colors.crosshairLabel,
+  };
+  return {
+    layout: { background: { type: ColorType.Solid, color: colors.background }, textColor: colors.axis },
+    grid: { vertLines: { visible: false }, horzLines: { color: colors.grid, style: LineStyle.Dotted } },
+    timeScale: { borderColor: colors.border },
+    crosshair: { mode: CrosshairMode.Normal, vertLine: { ...crosshairLine }, horzLine: { ...crosshairLine } },
+  };
+}
+function candleColors(colors) {
+  return {
+    upColor: colors.upBody,
+    downColor: colors.down,
+    borderUpColor: colors.up,
+    borderDownColor: colors.down,
+    wickUpColor: colors.up,
+    wickDownColor: colors.down,
+  };
+}
 const isoKey = (time) =>
   typeof time === 'object' && time !== null
     ? [time.year, String(time.month).padStart(2, '0'), String(time.day).padStart(2, '0')].join('-')
@@ -65,23 +124,24 @@ export function createTradingChart(container, callbacks = {}) {
   const root = document.createElement('div');
   Object.assign(root.style, { position: 'relative', width: '100%', height: '100%', overflow: 'hidden' });
   root.setAttribute('role', 'img');
-  root.setAttribute('aria-label', '蜡烛图，红色空心为上涨，绿色实心为下跌，可缩放查看行情');
+  let colors = activePalette();
+  const initial = chartColors(colors);
+  root.setAttribute('aria-label', colors.description);
   container.append(root);
   const chart = createChart(root, {
+    ...initial,
     autoSize: true,
     layout: {
-      background: { type: ColorType.Solid, color: COLORS.background },
-      textColor: COLORS.axis,
+      ...initial.layout,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", sans-serif',
       fontSize: 10,
       attributionLogo: true,
     },
-    grid: { vertLines: { visible: false }, horzLines: { color: COLORS.grid, style: LineStyle.Dashed } },
     rightPriceScale: { borderVisible: false, minimumWidth: 65 },
     leftPriceScale: { visible: false },
     timeScale: {
       borderVisible: true,
-      borderColor: COLORS.border,
+      ...initial.timeScale,
       secondsVisible: false,
       rightOffset: 3,
       barSpacing: 5.5,
@@ -89,27 +149,17 @@ export function createTradingChart(container, callbacks = {}) {
       fixLeftEdge: true,
       tickMarkMaxCharacterLength: 7,
     },
-    crosshair: {
-      mode: CrosshairMode.Normal,
-      vertLine: { color: '#708597', style: LineStyle.Dashed, labelBackgroundColor: '#536477' },
-      horzLine: { color: '#708597', style: LineStyle.Dashed, labelBackgroundColor: '#536477' },
-    },
     localization: { locale: 'zh-CN' },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
   });
 
   const priceSeries = chart.addSeries(CandlestickSeries, {
-    upColor: COLORS.background,
-    downColor: COLORS.down,
+    ...candleColors(colors),
     borderVisible: true,
-    borderUpColor: COLORS.up,
-    borderDownColor: COLORS.down,
-    wickUpColor: COLORS.up,
-    wickDownColor: COLORS.down,
     priceLineVisible: true,
     priceLineWidth: 1,
     priceLineStyle: LineStyle.Dotted,
-    priceLineColor: COLORS.up,
+    priceLineColor: colors.up,
     lastValueVisible: true,
   });
   chart.priceScale('right').applyOptions({ scaleMargins: { top: 0.09, bottom: 0.08 } });
@@ -153,7 +203,7 @@ export function createTradingChart(container, callbacks = {}) {
         drawLines.push(
           priceSeries.createPriceLine({
             price: d.price,
-            color: COLORS.drawing,
+            color: colors.drawing,
             lineWidth: 1,
             lineStyle: LineStyle.Dashed,
             title: '水平线',
@@ -165,7 +215,7 @@ export function createTradingChart(container, callbacks = {}) {
         );
         if (isoKey(points[0].time) === isoKey(points[1].time)) continue;
         const line = chart.addSeries(LineSeries, {
-          color: COLORS.drawing,
+          color: colors.drawing,
           lineWidth: 2,
           priceLineVisible: false,
           lastValueVisible: false,
@@ -182,7 +232,7 @@ export function createTradingChart(container, callbacks = {}) {
       drawLines.push(
         priceSeries.createPriceLine({
           price: trendStart.price,
-          color: COLORS.drawing,
+          color: colors.drawing,
           lineWidth: 1,
           lineStyle: LineStyle.Dotted,
           title: '起点',
@@ -202,13 +252,47 @@ export function createTradingChart(container, callbacks = {}) {
         priceSeries.createPriceLine({
           price: level.price,
           title: level.title || '',
-          color: level.color || '#456b99',
+          color: colors.levelColors[level.color] || level.color || colors.level,
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
         }),
       );
   }
+  function renderMarkers() {
+    const markers = (options.markers || [])
+      .filter((m) => rowIndex.has(isoKey(m.time)))
+      .map((m) => {
+        const isBuy = String(m.side).toLowerCase() === 'buy';
+        return {
+          time: m.time,
+          position: isBuy ? 'belowBar' : 'aboveBar',
+          shape: isBuy ? 'arrowUp' : 'arrowDown',
+          color: isBuy ? colors.buy : colors.sell,
+          text: isBuy ? '买' : '卖',
+          size: 1,
+        };
+      });
+    markers.sort((a, b) => rowIndex.get(isoKey(a.time)) - rowIndex.get(isoKey(b.time)));
+    markerPlugin.setMarkers(markers);
+  }
+  function applyTheme() {
+    const next = activePalette();
+    if (next === colors) return;
+    colors = next;
+    root.setAttribute('aria-label', colors.description);
+    chart.applyOptions(chartColors(colors));
+    const last = bars.at(-1);
+    lastPriceColor = last && last.close < last.open ? colors.down : colors.up;
+    priceSeries.applyOptions({ ...candleColors(colors), priceLineColor: lastPriceColor });
+    for (const line of drawLines) line.applyOptions({ color: colors.drawing });
+    for (const line of drawSeries) line.applyOptions({ color: colors.drawing });
+    levelsKey = undefined;
+    displayLevels(options.levels);
+    renderMarkers();
+  }
+  document.addEventListener('wavelab-theme', applyTheme);
+
   function resetView() {
     if (!bars.length) return;
     const mobile = root.clientWidth < 550;
@@ -255,28 +339,14 @@ export function createTradingChart(container, callbacks = {}) {
       });
     }
     const latest = bars.at(-1);
-    const priceColor = latest && latest.close < latest.open ? COLORS.down : COLORS.up;
+    const priceColor = latest && latest.close < latest.open ? colors.down : colors.up;
     if (lastPriceColor !== priceColor) {
-      // Hollow up candles have a white body. Explicitly color the last-price line and axis label.
+      // Set explicitly so a hollow candle never gives the last-price label a white fill.
       priceSeries.applyOptions({ priceLineColor: priceColor });
       lastPriceColor = priceColor;
     }
     priceSeries.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
-    const markers = (options.markers || [])
-      .filter((m) => rowIndex.has(isoKey(m.time)))
-      .map((m) => {
-        const isBuy = String(m.side).toLowerCase() === 'buy';
-        return {
-          time: m.time,
-          position: isBuy ? 'belowBar' : 'aboveBar',
-          shape: isBuy ? 'arrowUp' : 'arrowDown',
-          color: isBuy ? '#b32c3a' : '#096b53',
-          text: isBuy ? '买' : '卖',
-          size: 1,
-        };
-      });
-    markers.sort((a, b) => rowIndex.get(isoKey(a.time)) - rowIndex.get(isoKey(b.time)));
-    markerPlugin.setMarkers(markers);
+    renderMarkers();
     displayLevels(options.levels);
     displayDrawings();
     if (changedMarket || !prevRange || !oldLast) resetView();
@@ -364,6 +434,7 @@ export function createTradingChart(container, callbacks = {}) {
     if (destroyed) return;
     destroyed = true;
     ready = false;
+    document.removeEventListener('wavelab-theme', applyTheme);
     observer.disconnect();
     chart.remove();
     root.remove();

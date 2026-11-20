@@ -1,9 +1,17 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#f3f6f8" />
+    <meta name="theme-color" content="#1c1c1c" />
+    <script>
+      try {
+        if (localStorage.getItem('wavelab-theme') === 'light') {
+          document.documentElement.dataset.theme = 'light';
+          document.querySelector('meta[name=theme-color]').content = '#f3f6f8';
+        }
+      } catch {}
+    </script>
     <title>浪线 WaveLab · K 线训练终端</title>
     <meta name="description" content="中证、纳指等六大指数模拟交易与历史K线回放训练。" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
@@ -21,6 +29,9 @@
           ><button data-action="journal" class="nav"><i data-i="journal"></i>交易复盘</button>
         </nav>
         <div class="mast-actions">
+          <button id="themeSwitch" class="quiet" aria-label="切换到浅色" title="切换到浅色">
+            <i aria-hidden="true"></i><span>浅色</span>
+          </button>
           <button data-action="help" aria-label="使用指南" class="quiet help">
             <i data-i="help"></i><span>使用指南</span></button
           ><button data-action="new" class="primary new"><i data-i="plus"></i>新建训练</button>
