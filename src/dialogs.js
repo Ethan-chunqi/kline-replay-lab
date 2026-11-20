@@ -13,8 +13,9 @@ const link = (url, label) =>
 const fileLimit = 8 * 1024 * 1024;
 
 export function openMarkets(api, ctx) {
+  const historical = !ctx.session.live;
   api.show(
-    '选择市场',
+    historical ? '选择回放市场' : '选择市场',
     '<div class="option-list">' +
       ctx.markets
         .map(
@@ -26,11 +27,11 @@ export function openMarkets(api, ctx) {
             '" aria-pressed="' +
             (m.id === ctx.market.id) +
             '"><strong>' +
-            esc(m.name + (m.region === 'A股' ? ' 主连' : '')) +
+            esc(m.name + (m.region === 'A股' ? historical ? ' 期货' : ' 主连' : '')) +
             '</strong><small>' +
             esc(m.region) +
             ' · ' +
-            esc(m.region === 'A股' ? futuresTerms(m.id).continuous : m.symbol) +
+            esc(m.region === 'A股' ? historical ? futuresTerms(m.id).symbol : futuresTerms(m.id).continuous : m.symbol) +
             ' · ' +
             esc(m.currency) +
             '</small></button>',
@@ -128,7 +129,7 @@ export function openNew(api, ctx) {
         ['EM_LIVE', '东方财富 · 最新行情'],
         ['EM_REPLAY', '真实历史 · 随机回放'],
       ],
-      'EM_LIVE',
+      'EM_REPLAY',
     ) +
     '</optgroup>' +
     '<optgroup label="模拟行情">' +
@@ -192,7 +193,8 @@ export function openNew(api, ctx) {
       const pairs = [];
       if (csv) pairs.push(['', '请选择 CSV 文件中的价格标的']);
       if (terms) {
-        const label = csv ? '期货价格' : feed ? '股指期货 · 主力月份合约' : '股指期货模拟（参考主连）';
+        const label = csv ? '期货价格' : base.value === 'EM_REPLAY' ? '股指期货 · 历史交割月合约' :
+          feed ? '股指期货 · 主力月份合约' : '股指期货模拟（参考主连）';
         pairs.push(['future', terms.symbol + ' · ' + label]);
       }
       pairs.push(['spot', csv ? '指数点位 · 指数现货练习（1×）' : '指数现货练习（1×）']);
@@ -302,8 +304,8 @@ export function openHelp(api, ctx) {
   ];
   api.show(
     '使用指南',
-    '<div class="dialog-copy"><h3>看盘与回放</h3><p class="note">鼠标放在主图上，滚轮向上放大、向下缩小。按住右键拖动可左右查看历史、上下移动价格。点「回到最新」恢复视图。点击图表后也可用 <kbd>↑</kbd> 和 <kbd>↓</kbd> 缩放。回放时按 <kbd>→</kbd> 推进，按 <kbd>空格</kbd> 播放或暂停。点「随机时段」可从多个年份抽取行情，本浏览器优先选取未练过的年份、合约和交易日。原训练可在交易复盘中恢复。</p>' +
-      '<h3>行情来源</h3><p class="note">选择「东方财富 · 最新行情」查看最近可用的指数或国内股指期货合约行情，「真实历史 · 随机回放」按所选品种抽取区间。国内期货使用新浪财经的历史交割月合约，指数日线可从腾讯行情的历年档案抽取。图上显示行情源的更新时间。页面每 15 秒检查一次，公开期货行情可能延时 15 分钟。东方财富历史不足时，图表可使用新浪财经同月份期货或同一指数的历史 K 线，并标明来源。其他市场可使用生成的模拟行情，或导入自己的历史 CSV。</p>' +
+    '<div class="dialog-copy"><h3>看盘与回放</h3><p class="note">鼠标放在主图上，滚轮向上放大、向下缩小。按住右键拖动可左右查看历史、上下移动价格。点「回到最新」恢复视图。点击图表后也可用 <kbd>↑</kbd> 和 <kbd>↓</kbd> 缩放。回放时按 <kbd>→</kbd> 推进，按 <kbd>空格</kbd> 播放或暂停。「往年随机」从当前自然年以前的行情开练。选定具体年份会立即跳转。「随机时段」在该范围内优先抽取未练过的合约和日期。图名旁的回放时间和剩余交易日数随进度更新。原训练可在交易复盘中恢复。</p>' +
+      '<h3>行情来源</h3><p class="note">选择「东方财富 · 最新行情」查看最近可用的指数或国内股指期货合约行情，「真实历史 · 随机回放」按所选品种抽取区间。国内期货使用站内真实交割月档案、公开的 CC0 五分钟合约数据和新浪财经历史行情，指数日线使用腾讯或新浪财经的历年数据。图上显示行情源的更新时间。页面每 15 秒检查一次，公开期货行情可能延时 15 分钟。东方财富历史不足时，图表可使用新浪财经同月份期货或同一指数的历史 K 线，并标明来源。其他市场可使用生成的模拟行情，或导入自己的历史 CSV。</p>' +
       '<h3>趋势线</h3><p class="note">选择「趋势线」，依次点击两个端点。拖动线身可平移，拖动端点可修改方向和长度。点中一条线，可在下方修改颜色和粗细。左键或右键单击线身，再点线旁的「删除」即可删掉这一条。图表聚焦时也可按 Delete 或退格键。</p>' +
       '<h3>图表周期</h3><p class="note">图表保留蜡烛和画线工具。分钟、小时、日、周、月、季、年线由当前训练的基础 K 线聚合。每根尚在形成的图表 K 线只包含已揭晓的数据。查看更细的周期，可在新建训练时选择相应基础行情。</p>' +
       '<h3>模拟下单与平仓</h3><p class="note">市价单按当前可见价格加滑点成交，限价、停止和停止限价单根据后续行情撮合。停止限价单触发后继续按指定限价等待。止盈按限价、止损按触发市价。回放时按开盘、离开盘较近的极值、另一极值、收盘的次序撮合。点击「一键平仓」，可按市价平掉当前标的全部多头或空头持仓。</p>' +

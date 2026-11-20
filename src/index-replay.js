@@ -32,7 +32,7 @@ export async function loadIndexArchivePeriod(marketId, base, candidate, { signal
   const period = indexArchivePeriods(marketId, base).find((item) => item.key === candidate?.key);
   if (!period) throw new Error('该指数和周期没有相应的历史区间');
   const { ticker, name, symbol } = indices[marketId];
-  const method = ticker.startsWith('us') ? 'usfqkline/get' : 'fqkline/get';
+  const method = ticker.startsWith('us') ? 'usfqkline/get' : ticker.startsWith('hk') ? 'hkfqkline/get' : 'fqkline/get';
   const url = new URL('https://web.ifzq.gtimg.cn/appstock/app/' + method);
   url.searchParams.set('param', [ticker, 'day', period.from, period.to, 320, 'qfq'].join(','));
   const response = await fetch(url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' });

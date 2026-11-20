@@ -1888,6 +1888,14 @@ html[data-theme='dark'] #toast {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.watch-caption { font-size: 12px; color: var(--muted); font-weight: 400; }
+.training-clock { margin-top: 4px; color: var(--accent, var(--mint)); font-size: 13px; font-variant-numeric: tabular-nums; }
+.replay, .play-group { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .training-clock { font-size: 11px; }
+  .instrument-row { flex-wrap: wrap; }
+  .play-group { row-gap: 6px; }
+}
 .trend-swatches,
 .trend-width {
   display: inline-flex;

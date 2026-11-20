@@ -36,6 +36,8 @@ const sessions = {
   ],
   美股: [[570, 960]],
 };
+// CFFEX changed its equity-index futures hours on 2016-01-01.
+const earlyFuturesSessions = [[555, 690], [780, 915]];
 const zoneRegions = { 'Asia/Shanghai': 'A股', 'Asia/Hong_Kong': '港股', 'America/New_York': '美股' };
 const zoneCache = new Map();
 const weeklyCache = new Map();
@@ -107,7 +109,9 @@ function keyOf(time, period, market) {
   const duration = durations.get(period);
   if (!duration) throw new Error('不支持的图表周期：' + period);
   const region = market.region || zoneRegions[market.timeZone];
-  return date + '/' + intradayKey(minute, duration, sessions[region] || [[0, 1440]]);
+  const windows = market.exchange === 'CFFEX' && date < '2016-01-01'
+    ? earlyFuturesSessions : sessions[region] || [[0, 1440]];
+  return date + '/' + intradayKey(minute, duration, windows);
 }
 
 const seconds = (time) => (typeof time === 'number' ? time : Date.parse(time) / 1000);

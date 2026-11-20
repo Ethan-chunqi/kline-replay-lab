@@ -1,3 +1,5 @@
+import { fullContractSessions } from './contract-catalog.js';
+import { loadFullContractHistory } from './contract-history.js';
 import { futuresTerms } from './eastmoney.js';
 import { fetchSecondaryHistory, loadPublicRows, parseRows } from './secondary-history.js';
 
@@ -37,7 +39,7 @@ export function archivePeriods(marketId, base) {
   const interval = intervals[base];
   if (!spec || !interval) return [];
   const launch = firstDelivery[spec.prefix];
-  const first = interval === '1D' ? launch : Math.max(launch, firstIntraday[interval]);
+  const first = interval === '1D' || interval === '5m' ? launch : Math.max(launch, firstIntraday[interval]);
   // After the verified catalogue, offer newly completed months. The loader
   // checks the returned dates and actual trading activity before using them.
   const now = new Date();
@@ -48,10 +50,14 @@ export function archivePeriods(marketId, base) {
     for (let month = 1; month <= 12; month++) {
       const delivery = (year % 100) * 100 + month;
       if (delivery < first || delivery > lastDelivery) continue;
-      if (delivery < 2004 && delivery !== launch && month % 3 !== 0) continue;
       const symbol = spec.prefix + delivery;
-      if (excluded[symbol]?.includes(interval)) continue;
-      periods.push({ key: symbol, symbol, year, month });
+      const sessions = interval === '5m' ? fullContractSessions(symbol) : 0;
+      if (!sessions) {
+        if (interval === '5m' && delivery < firstIntraday[interval]) continue;
+        if (delivery < 2004 && delivery !== launch && month % 3 !== 0) continue;
+        if (excluded[symbol]?.includes(interval)) continue;
+      }
+      periods.push({ key: symbol, symbol, year, month, sessions });
     }
   }
   return periods;
@@ -81,9 +87,14 @@ async function fetchEarlyDaily(symbol, signal) {
 export async function loadArchivePeriod(marketId, base, candidate, { signal } = {}) {
   const period = archivePeriods(marketId, base).find(({ key }) => key === candidate?.key);
   if (!period) return null;
-  const history = base === '1D' && period.symbol.slice(2) < '1906'
-    ? await fetchEarlyDaily(period.symbol, signal)
-    : await fetchSecondaryHistory(marketId, period.symbol, base, { signal });
+  let history;
+  if (period.sessions) {
+    history = await loadFullContractHistory(period.symbol, signal);
+  } else if (base === '1D' && period.symbol.slice(2) < '1906') {
+    history = await fetchEarlyDaily(period.symbol, signal);
+  } else {
+    history = await fetchSecondaryHistory(marketId, period.symbol, base, { signal });
+  }
   const firstDate = tradingDate(history.bars[0].time);
   const tradeDate = tradingDate(history.bars.at(-1).time);
   const deliveryMonth = period.year + '-' + String(period.month).padStart(2, '0');

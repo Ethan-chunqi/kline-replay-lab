@@ -5,13 +5,15 @@ export function pickRandomStart({
   previousStart,
   blockedStarts = [],
   blockedRanges = [],
+  earliestStart = 0,
+  latestStart = length - 2,
   random = Math.random,
 }) {
   if (!Number.isSafeInteger(length) || length < 2) throw new RangeError('随机训练至少需要两根 K 线');
   const lastStart = length - 2;
   const warmup = Math.min(119, Math.floor(lastStart / 5));
-  const future = Math.min(60, Math.max(1, Math.floor(length / 4)));
-  const latest = length - 1 - future;
+  const earliest = Math.max(0, Math.min(earliestStart, lastStart));
+  const latest = Math.max(earliest, Math.min(latestStart, Math.floor((length - 1) * 0.6), lastStart));
   const validIndex = (i) => Number.isInteger(i) && i >= 0 && i < length;
   const anchors = [currentIndex, previousStart].filter(validIndex);
   const visited = new Set([...blockedStarts].filter(validIndex));
@@ -24,10 +26,10 @@ export function pickRandomStart({
     return result;
   }
 
-  let pool = available(warmup, latest);
-  if (!pool.length) pool = available(0, lastStart);
+  let pool = available(Math.min(Math.max(earliest, warmup), latest), latest);
+  if (!pool.length) pool = available(earliest, latest);
   // With fewer than four bars, both possible starts may already be anchors.
-  if (!pool.length) return currentIndex === 0 && lastStart > 0 ? 1 : 0;
+  if (!pool.length) return earliest;
 
   const untouched = pool.filter((i) => !blockedRanges.some(([from, to]) => i >= from && i <= to));
   if (untouched.length) pool = untouched;

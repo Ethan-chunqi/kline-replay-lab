@@ -15,7 +15,7 @@
     <title>浪线 WaveLab · K 线训练终端</title>
     <meta name="description" content="中证、纳指等六大指数模拟交易与历史K线回放训练。" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./style.css?v=20261120b" />
     <link rel="stylesheet" href="./journal.css" />
   </head>
   <body>
@@ -48,7 +48,7 @@
       </div>
       <section aria-label="市场选择">
         <div class="section-line">
-          <h2>市场观察</h2>
+          <h2>市场观察 <small class="watch-caption">最新报价</small></h2>
           <button class="text-button" data-action="markets">全部市场 <i data-i="market"></i></button>
         </div>
         <div class="watchlist" id="watchlist"></div>
@@ -64,6 +64,7 @@
                   <span id="region" class="region"></span>
                 </div>
                 <div class="instrument-code" id="instrumentCode"></div>
+                <div id="trainingClock" class="training-clock" hidden></div>
               </div>
             </div>
             <div class="quote"><strong id="quotePrice"></strong><span id="quoteChange"></span></div>
@@ -141,6 +142,7 @@
               >
                 <i data-i="shuffle"></i><span id="randomLabel">随机时段</span>
               </button>
+              <select id="archiveYear" aria-label="选择回放年份，选中后跳转" title="选择年份后立即跳转"><option value="auto">往年随机</option></select>
               <button
                 class="play-btn"
                 data-action="play"
@@ -273,6 +275,6 @@
       <div id="dialogBody"></div>
     </dialog>
     <div id="toast" aria-live="polite" role="status"></div>
-    <script type="module" src="./src/app.js"></script>
+    <script type="module" src="./src/app.js?v=20261120b"></script>
   </body>
 </html>
