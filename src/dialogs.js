@@ -1,4 +1,5 @@
 import { parseBarsCSV } from './import.js';
+import { futuresTerms } from './eastmoney.js';
 
 const esc = (value) =>
   String(value ?? '').replace(
@@ -25,11 +26,11 @@ export function openMarkets(api, ctx) {
             '" aria-pressed="' +
             (m.id === ctx.market.id) +
             '"><strong>' +
-            esc(m.name) +
+            esc(m.name + (m.region === 'A股' ? ' 主连' : '')) +
             '</strong><small>' +
             esc(m.region) +
             ' · ' +
-            esc(m.symbol) +
+            esc(m.region === 'A股' ? futuresTerms(m.id).continuous : m.symbol) +
             ' · ' +
             esc(m.currency) +
             '</small></button>',
@@ -38,7 +39,8 @@ export function openMarkets(api, ctx) {
       '</div>',
   );
   for (const option of body().querySelectorAll('[data-market]')) {
-    option.addEventListener('click', () => {
+    option.addEventListener('click', (event) => {
+      event.stopPropagation();
       api.close();
       ctx.onSwitch(option.dataset.market);
     });
@@ -116,22 +118,21 @@ function options(pairs, selected) {
 export function openNew(api, ctx) {
   const account = ctx.session.account;
   const marketPairs = ctx.markets.map((m) => [m.id, m.name + ' · ' + m.currency]);
-  const realMarkets = ctx.markets.filter((m) => m.region === 'A股').map((m) => [m.id, m.name]);
   const futureStart = 1000000;
   const spotStart = 100000;
   const capital = account?.initialCash ?? spotStart;
   const sources =
     '<optgroup label="东方财富">' +
-    options([
-      ['EM_LIVE', '东方财富 · 最新行情'],
-      ['EM_REPLAY', '东方财富 · 随机回放'],
-    ]) +
+    options(
+      [
+        ['EM_LIVE', '东方财富 · 最新行情'],
+        ['EM_REPLAY', '东方财富 · 随机回放'],
+      ],
+      'EM_LIVE',
+    ) +
     '</optgroup>' +
     '<optgroup label="模拟行情">' +
-    options(
-      simulatedIntervals.map(([id, name]) => [id, '模拟' + name]),
-      '1D',
-    ) +
+    options(simulatedIntervals.map(([id, name]) => [id, '模拟' + name])) +
     '</optgroup>' +
     '<option value="CSV">导入历史 CSV</option>';
 
@@ -143,13 +144,9 @@ export function openNew(api, ctx) {
       '<label class="field"><span>练习市场</span><select name="market">' +
       options(marketPairs, ctx.market.id) +
       '</select></label></div>' +
-      '<div id="feed-controls" hidden><label class="field"><span>模拟交易品种</span><select name="kind">' +
-      options([
-        ['future', '股指期货 · 主力具体合约（15% 参考保证金）'],
-        ['spot', '指数点位（1 倍）'],
-      ]) +
-      '</select></label>' +
-      '<label class="field"><span>行情基础周期</span><select name="feedBase">' +
+      '<label class="field"><span id="kind-label">模拟交易品种</span><select name="kind" required></select></label>' +
+      '<p id="kind-description" class="note"></p>' +
+      '<div id="feed-controls" hidden><label class="field"><span>行情基础周期</span><select name="feedBase">' +
       options(feedIntervals, '5m') +
       '</select></label>' +
       '<p id="feed-description" class="note"></p></div>' +
@@ -161,13 +158,13 @@ export function openNew(api, ctx) {
       inputNumber('nth', '从第几根开始', 120, 1, 20000, 1) +
       '</div>' +
       '<div class="twocol">' +
-      inputNumber('fee', '手续费（基点）', account?.feeBps ?? 3, 0, 9999, 'any') +
+      inputNumber('fee', '单边手续费（基点）', account?.feeBps ?? 3, 0, 9999, 'any') +
       inputNumber('slip', '滑点（基点）', account?.slippageBps ?? 2, 0, 9999, 'any') +
       '</div>' +
       '<label class="checkrow"><input type="checkbox" name="short" ' +
       (account?.allowShort !== false ? 'checked' : '') +
       '>允许做空</label>' +
-      '<p class="note">1 基点 = 0.01%。当前训练会自动存档，可在交易复盘中恢复。</p>' +
+      '<p class="note">1 基点 = 0.01%。手续费按每笔成交的名义金额收取，开仓和平仓分别计费。滑点按成交参考价计算。当前训练会自动存档。</p>' +
       '<p id="train-error" class="error" role="alert"></p><button name="create" type="submit" class="primary modal-action">开始训练</button></form>',
   );
   const form = body().querySelector('form');
@@ -181,24 +178,53 @@ export function openNew(api, ctx) {
     feedBase = get('feedBase'),
     nth = get('nth'),
     submit = get('create');
-  let lastFeed = false;
+  let lastMarket, lastSource;
   let chosenCapital = ![spotStart, futureStart].includes(capital);
-  let rememberedMarket = ctx.market.id;
 
-  function update(event) {
+  function update() {
     const feed = isFeed(base.value);
-    if (feed !== lastFeed || (feed && event?.target === kind)) {
-      const currentId = market.value;
-      if (feed && !lastFeed) rememberedMarket = currentId;
-      const availableMarkets = feed && kind.value === 'future' ? realMarkets : marketPairs;
-      market.innerHTML = options(availableMarkets, feed ? currentId : rememberedMarket);
+    const csv = base.value === 'CSV';
+    const selectedMarket = ctx.markets.find((item) => item.id === market.value);
+    const terms = selectedMarket.region === 'A股' ? futuresTerms(selectedMarket.id) : null;
+    if (lastMarket !== market.value || lastSource !== base.value) {
+      const resetKind = lastMarket !== market.value || csv || lastSource === 'CSV';
+      const selected = resetKind ? (csv ? '' : terms ? 'future' : 'spot') : kind.value;
+      const pairs = [];
+      if (csv) pairs.push(['', '请选择 CSV 文件中的价格标的']);
+      if (terms) {
+        const label = csv ? '期货价格' : feed ? '股指期货 · 主力月份合约' : '股指期货模拟（参考主连）';
+        pairs.push(['future', terms.symbol + ' · ' + label]);
+      }
+      pairs.push(['spot', csv ? '指数点位 · 指数现货练习（1×）' : '指数现货练习（1×）']);
+      kind.innerHTML = options(pairs, selected);
+      lastMarket = market.value;
+      lastSource = base.value;
     }
-    if ((feed !== lastFeed || event?.target === kind) && !chosenCapital) {
-      capitalInput.value = feed && kind.value === 'future' ? futureStart : spotStart;
+    body().querySelector('#kind-label').textContent = csv ? 'CSV 价格标的' : '模拟交易品种';
+    let description = '';
+    if (kind.value === 'future') {
+      const leverage = (1 / terms.marginRate).toFixed(2);
+      description =
+        terms.symbol +
+        ' 每手每点 ' +
+        terms.multiplier +
+        ' 元，最小变动 ' +
+        terms.tickSize +
+        ' 点。参考开仓保证金为名义金额的 ' +
+        Number((terms.marginRate * 100).toFixed(2)) +
+        '%，对应约 ' +
+        leverage +
+        ' 倍杠杆。';
+    } else if (kind.value === 'spot') {
+      description = '指数每点折合 1 ' + selectedMarket.currency + '，按 1 倍名义金额练习。';
+    } else {
+      description = '请选择与文件中 OHLC 对应的交易品种。该选择决定每点盈亏与保证金。';
     }
-    lastFeed = feed;
+    body().querySelector('#kind-description').textContent = description;
+    if (!chosenCapital)
+      capitalInput.value = kind.value === 'future' ? futureStart : kind.value === 'spot' ? spotStart : '';
     body().querySelector('#feed-controls').hidden = !feed;
-    kind.disabled = feedBase.disabled = !feed;
+    feedBase.disabled = !feed;
     body().querySelector('#feed-description').textContent =
       base.value === 'EM_LIVE'
         ? '使用行情源最近可用的 K 线，行情时间见图表。'
@@ -212,7 +238,7 @@ export function openNew(api, ctx) {
     nth.max = base.value === 'CSV' ? 19999 : 719;
     error.textContent = '';
   }
-  for (const control of [base, kind, start]) control.addEventListener('change', update);
+  for (const control of [base, market, kind, start]) control.addEventListener('change', update);
   capitalInput.addEventListener('input', () => {
     chosenCapital = true;
   });
@@ -225,6 +251,7 @@ export function openNew(api, ctx) {
     const feed = isFeed(base.value);
     const config = {
       marketId: targetMarket.id,
+      kind: kind.value,
       base: feed ? feedBase.value : base.value,
       initialCash: Number(capitalInput.value),
       feeBps: Number(get('fee').value),
@@ -236,8 +263,9 @@ export function openNew(api, ctx) {
     submit.disabled = true;
     if (feed) submit.textContent = '正在读取行情…';
     try {
+      if (!config.kind) throw new Error('请先选择 CSV 文件中的价格标的。');
       if (feed) {
-        await ctx.onFeed({ ...config, kind: kind.value, live: base.value === 'EM_LIVE' });
+        await ctx.onFeed({ ...config, live: base.value === 'EM_LIVE' });
       } else {
         let count = 720;
         if (config.base === 'CSV') {
@@ -277,7 +305,7 @@ export function openHelp(api, ctx) {
       '<h3>行情来源</h3><p class="note">选择「东方财富 · 最新行情」查看最近可用的指数或国内股指期货合约行情，「东方财富 · 随机回放」从可用历史中抽选起点。图上显示行情源的更新时间。页面每 15 秒检查一次，公开期货行情可能延时 15 分钟。东方财富历史不足时，图表可使用新浪财经同月份期货或同一指数的历史 K 线，并标明来源。其他市场可使用生成的模拟行情，或导入自己的历史 CSV。</p>' +
       '<h3>图表周期</h3><p class="note">图表保留蜡烛和画线工具。分钟、小时、日、周、月、季、年线由当前训练的基础 K 线聚合。每根尚在形成的图表 K 线只包含已揭晓的数据。查看更细的周期，可在新建训练时选择相应基础行情。</p>' +
       '<h3>模拟下单与平仓</h3><p class="note">市价单按当前可见价格加滑点成交，限价、停止和停止限价单根据后续行情撮合。停止限价单触发后继续按指定限价等待。止盈按限价、止损按触发市价。回放时按开盘、离开盘较近的极值、另一极值、收盘的次序撮合。点击「一键平仓」，可按市价平掉当前标的全部多头或空头持仓。</p>' +
-      '<h3>盈亏和保证金</h3><p class="note">浮动盈亏随当前持仓价格更新，已实现盈亏累计已平部分的收益及对应费用。累计盈亏等于账户净值减初始资金。指数点位按每点 1 本币、1 倍资金交易。国内股指期货按具体合约乘数以手计价，模拟开仓按合约名义价值的 15% 估算保证金，合约涨跌按乘数计入盈亏。</p>' +
+      '<h3>盈亏和保证金</h3><p class="note">浮动盈亏随当前持仓价格更新，已实现盈亏累计已平部分的收益及对应费用。累计盈亏等于账户净值减初始资金。中证1000 默认练习 IM、中证500 默认练习 IC、沪深300 默认练习 IF。IM 和 IC 每手每点 200 元，IF 每手每点 300 元。练习按 15% 参考开仓保证金、约 6.67 倍名义杠杆计算。选择「指数现货练习（1×）」后，每点盈亏按每单位 1 本币计算。CSV 训练按你选定的文件价格标的计价。</p>' +
       '<h3>复盘与保存</h3><p class="note">在交易复盘查看净值、记录笔记或导出成交 CSV。新训练会归档当前进度。训练保存在当前浏览器，清除站点数据会清除记录。</p>' +
       '<h3>工具与参考</h3><p class="note">图表使用 ' +
       link('https://tradingview.github.io/lightweight-charts/', 'TradingView Lightweight Charts™') +

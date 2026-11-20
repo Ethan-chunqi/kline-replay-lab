@@ -1,15 +1,10 @@
 // A verified closing print anchors one generated scenario. No other OHLC or volume is sourced history.
 import { generateBars, MARKETS } from './market.js';
+import { futuresTerms } from './eastmoney.js';
 
 const DAY = 86400000;
 const quoteUrl = (secid) => 'https://quote.eastmoney.com/q/' + secid + '.html';
 const dateOf = (day) => new Date(day).toISOString().slice(0, 10);
-const marginSourceUrl = 'https://qhweb.eastmoney.com/bzj/cffex';
-const terms = {
-  IM: ['https://www.cffex.com.cn/u/cms/www/202207/18190308vxpv.pdf', 200],
-  IC: ['https://www.cffex.com.cn/u/cms/www/202003/27165943rkyd.pdf', 200],
-  IF: ['https://www.cffex.com.cn/u/cms/www/202003/27160915uqs5.pdf', 300],
-};
 const calendars = {
   A股: [
     [570, 690],
@@ -144,24 +139,7 @@ export function anchoredScenario(marketId, { base = '5m', kind = 'future', seed 
   const future = kind === 'future' && snapshot.future;
   const { future: unused, ...indexQuote } = snapshot;
   const quote = { ...(future || indexQuote) };
-  let contract = null;
-  if (future) {
-    const [specSourceUrl, multiplier] = terms[quote.symbol.slice(0, 2)];
-    contract = {
-      symbol: quote.symbol,
-      multiplier,
-      tickSize: 0.2,
-      marginRate: 0.15,
-      maintenanceRate: 0.12,
-      exchangeMarginRate: 0.12,
-      marginSourceUrl,
-      sourceUrl: marginSourceUrl,
-      specSourceUrl,
-      asOf: quote.tradeDate,
-      marginAsOf: quote.tradeDate,
-      exchangeMarginSourceUrl: 'https://www.sywgqh.com.cn/Pc/Customer_Service/Cover_Cost/132313.html',
-    };
-  }
+  const contract = future ? futuresTerms(marketId, quote.symbol) : null;
   const period = barMinutes(base);
   const startIndex = deep ? 1199 : 119;
   const source = generateBars(marketId, seed, deep ? 4800 : 720, base);

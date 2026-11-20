@@ -211,10 +211,12 @@
                 /></label>
               </div>
             </details>
-            <div class="estimate"><span>预计名义金额</span><b id="notional"></b></div>
+            <div class="estimate" id="lotValueRow" hidden><span>一手合约价值</span><b id="lotValue"></b></div>
             <div class="estimate" id="marginEstimateRow" hidden>
-              <span>每手参考保证金</span><b id="marginEstimate"></b>
+              <span>一手开仓保证金</span><b id="marginEstimate"></b>
             </div>
+            <div class="estimate"><span>本单名义金额</span><b id="notional"></b></div>
+            <div class="estimate" id="orderMarginRow" hidden><span>本单开仓部分保证金</span><b id="orderMargin"></b></div>
             <button class="submit" data-action="submit" id="submitOrder">模拟买入</button>
             <div class="ticket-foot" id="feeHint"></div>
           </div>

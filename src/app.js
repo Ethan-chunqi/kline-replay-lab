@@ -3,7 +3,7 @@ import { timeframeOptions, periodBars, executionTime, nextDisplayCursor } from '
 import { anchoredScenario, SNAPSHOT_QUOTES } from './anchor.js';
 import { pickRandomStart } from './random-period.js';
 import { loadChartFeed } from './feed-service.js';
-import { fetchEastmoneyQuote } from './eastmoney.js';
+import { fetchEastmoneyQuote, futuresTerms } from './eastmoney.js';
 import { tradingBar, applyLiveQuote } from './live.js';
 import {
   createAccount,
@@ -72,7 +72,10 @@ let s,
   refreshIssue = '',
   frameChoices = [];
 const domestic = (id) => ['csi1000', 'csi500', 'csi300'].includes(id);
-const watch = new Map(Object.entries(SNAPSHOT_QUOTES).map(([id, quote]) => [id, { quote, pinned: true }]));
+const watchStore = 'wavelab-main-contract-watch';
+const watch = new Map(
+  Object.entries(SNAPSHOT_QUOTES).map(([id, quote]) => [id, { quote: quote.future || quote, pinned: true }]),
+);
 const markBar = () => tradingBar(s, bars[s.cursor]);
 const unitName = () => (s.account.contract ? '手' : '单位');
 const baseIDs = ['1m', '3m', '5m', '10m', '15m', '30m', '1H', '2H', '4H', '1D', '1W', '1M', '1Q', '1Y'];
@@ -176,7 +179,20 @@ function applyRecovery(active) {
   return next;
 }
 function getBars(config) {
-  return config.customBars || generateBars(config.marketId, config.seed, 720, config.base);
+  if (config.customBars) return config.customBars;
+  const series = generateBars(config.marketId, config.seed, 720, config.base);
+  const ref = config.simulationReference;
+  if (!ref) return series;
+  const scale = ref.price / series[ref.index].close;
+  const ticksPerPoint = 1 / ref.tickSize;
+  const price = (n) => Math.max(1, Math.round(n * scale * ticksPerPoint)) / ticksPerPoint;
+  return series.map((bar) => ({
+    ...bar,
+    open: price(bar.open),
+    high: price(bar.high),
+    low: price(bar.low),
+    close: price(bar.close),
+  }));
 }
 function makeSession(config = {}) {
   const {
@@ -187,7 +203,13 @@ function makeSession(config = {}) {
     customBars,
     customName = '',
   } = config;
-  const series = getBars({ marketId, base, seed, customBars });
+  const series = getBars({
+    marketId,
+    base,
+    seed,
+    customBars,
+    simulationReference: config.simulationReference,
+  });
   const start = config.live ? series.length - 1 : Math.max(0, Math.min(startIndex, series.length - 2));
   const account = createAccount(config);
   if (!config.live) advanceBar(account, series[start]);
@@ -200,6 +222,8 @@ function makeSession(config = {}) {
     cursor: start,
     customBars,
     customName,
+    instrumentKind: config.kind || config.feed?.kind || (config.contract ? 'future' : 'spot'),
+    simulationReference: config.simulationReference,
     account,
     notes: [],
     period: config.period || 'BASE',
@@ -229,11 +253,20 @@ function displayMarket(session = s) {
       symbol: session.feed.symbol,
       exchange: session.account.contract ? 'CFFEX' : profile.exchange,
     };
+  if (session.account.contract) {
+    return {
+      ...profile,
+      exchange: 'CFFEX',
+      symbol: session.account.contract.symbol,
+      name: session.customName || profile.name + ' 股指期货模拟',
+    };
+  }
   return session.customBars ? { ...profile, name: session.customName || '自选行情', symbol: 'CSV' } : profile;
 }
 function activate(next) {
   stop();
   s = next;
+  s.instrumentKind ??= s.account.contract ? 'future' : 'spot';
   loadVersion++;
   loadBusy = false;
   refreshIssue = '';
@@ -262,10 +295,14 @@ function activate(next) {
 }
 async function switchMarket(id) {
   if (!byId(id)) return;
-  if (s.marketId === id && s.feed && !s.feed.anchored) return;
-  const past = [...sessions.values()]
-    .filter((x) => x.marketId === id && x.feed)
-    .sort((a, b) => b.updated - a.updated)[0];
+  const mainSymbol = domestic(id) ? watch.get(id)?.quote?.symbol : null;
+  const matches = (x) =>
+    x.marketId === id &&
+    x.feed &&
+    !x.feed.anchored &&
+    (!mainSymbol || (x.live && x.account.contract?.symbol === mainSymbol));
+  if (matches(s)) return;
+  const past = [...sessions.values()].filter(matches).sort((a, b) => b.updated - a.updated)[0];
   if (past) return activate(past);
   const cfg = { marketId: id, kind: domestic(id) ? 'future' : 'spot', base: '5m', live: true };
   const version = loadVersion + 1;
@@ -325,12 +362,18 @@ function renderMarkets() {
       const m = byId(id),
         item = watch.get(id),
         quote = item?.quote,
-        selected = s.marketId === id;
+        selected = s.marketId === id && (!domestic(id) || !!s.account.contract);
       const value = quote ? number(quote.price) : '—';
       const change = quote?.previousClose ? (quote.price / quote.previousClose - 1) * 100 : null;
       const small = quote
         ? quote.tradeDate +
-          (item.pinned ? ' · 收盘快照' : item.dailySource ? ' · 日线 ' + item.dailySource : ' · 指数现货')
+          (domestic(id)
+            ? ' · ' + quote.symbol + (item.pinned ? ' 收盘快照' : ' · 东方财富')
+            : item.pinned
+              ? ' · 收盘快照'
+              : item.dailySource
+                ? ' · 日线 ' + item.dailySource
+                : ' · 指数现货')
         : '等待东方财富行情';
       return (
         '<button class="market-card ' +
@@ -341,8 +384,9 @@ function renderMarkets() {
         selected +
         '"><span class="card-top"><span class="card-name">' +
         humanName(m.name) +
+        (domestic(id) ? ' 主连' : '') +
         '</span><span class="card-code">' +
-        m.symbol +
+        (domestic(id) ? futuresTerms(id).continuous : m.symbol) +
         '</span></span><span class="card-body"><span><span class="card-value">' +
         value +
         '</span><span class="card-change ' +
@@ -562,17 +606,22 @@ function ticketEstimate() {
       type === 'market'
         ? markBar().close
         : Number(elements(type === 'stopLimit' ? 'limitPrice' : 'orderPrice').value);
-  elements('notional').textContent =
-    number(
-      Math.max(0, Number(elements('qty').value) || 0) * (price || 0) * (s.account.contract?.multiplier || 1),
-    ) +
-    ' ' +
-    market.currency;
   const terms = s.account.contract;
+  const qty = Math.max(0, Number(elements('qty').value) || 0);
+  const lotValue = Math.max(0, price || 0) * (terms?.multiplier || 1);
+  const money = (amount) => number(amount) + ' ' + market.currency;
+  elements('notional').textContent = money(qty * lotValue);
+  elements('lotValueRow').hidden = !terms;
   elements('marginEstimateRow').hidden = !terms;
-  if (terms)
-    elements('marginEstimate').textContent =
-      number((price || 0) * terms.multiplier * terms.marginRate) + ' ' + market.currency;
+  elements('orderMarginRow').hidden = !terms;
+  if (terms) {
+    const position = s.account.position.qty;
+    const closing = side === 'buy' ? Math.max(0, -position) : Math.max(0, position);
+    const openingLots = Math.max(0, qty - closing);
+    elements('lotValue').textContent = money(lotValue);
+    elements('marginEstimate').textContent = money(lotValue * terms.marginRate);
+    elements('orderMargin').textContent = money(openingLots * lotValue * terms.marginRate);
+  }
 }
 function renderTicket() {
   const price = markBar().close,
@@ -607,15 +656,21 @@ function renderTicket() {
     elements('contractInfo').innerHTML =
       '<strong>' +
       esc(terms.symbol) +
-      '</strong> · ' +
-      terms.multiplier +
-      ' 元/点 · 保证金 ' +
-      number(terms.marginRate * 100, 0) +
-      '%（约 ' +
+      ' · 合约杠杆 ' +
       number(1 / terms.marginRate) +
-      ' 倍）<br>已占保证金 ' +
+      '×</strong><br>每手每点 ' +
+      terms.multiplier +
+      ' 元 · 最小跳动 ' +
+      terms.tickSize +
+      ' 点（' +
+      number(terms.tickSize * terms.multiplier, 0) +
+      ' 元）<br>东财客户参考保证金 ' +
+      number(terms.marginRate * 100, 0) +
+      '% · 交易所 ' +
+      number((terms.exchangeMarginRate || 0.12) * 100, 0) +
+      '%<br>已占保证金 ' +
       number(snap.marginUsed) +
-      ' 元 · 持仓杠杆 ' +
+      ' 元 · 账户实际杠杆 ' +
       number(snap.leverage) +
       ' 倍' +
       (meta.marginSourceUrl
@@ -704,7 +759,14 @@ function render() {
       : '模拟生成行情';
   elements('todayBtn').textContent = loadBusy ? '正在取行情…' : s.live ? '刷新报价' : '今日行情';
   elements('todayBtn').disabled = loadBusy;
-  elements('instrumentName').textContent = humanName(market.name);
+  const main =
+    domestic(s.marketId) &&
+    s.live &&
+    s.account.contract &&
+    watch.get(s.marketId)?.quote.symbol === s.account.contract.symbol;
+  elements('instrumentName').textContent = main
+    ? humanName(byId(s.marketId).name) + ' 主连'
+    : humanName(market.name);
   elements('region').textContent = market.region;
   elements('instrumentCode').textContent =
     market.exchange +
@@ -717,7 +779,17 @@ function render() {
         (s.feed.anchored
           ? s.feed.tradeDate + ' 收盘基准'
           : (s.live ? '报价 东方财富 · ' : '') + 'K线 ' + (s.feed.historySource || '东方财富'))
-      : '');
+      : s.simulationReference
+        ? ' · 基准 ' +
+          s.simulationReference.symbol +
+          ' · ' +
+          s.simulationReference.tradeDate +
+          ' · ' +
+          number(s.simulationReference.price) +
+          ' 点'
+        : domestic(s.marketId) && !s.account.contract
+          ? ' · 指数现货练习（1×）'
+          : '');
   elements('quotePrice').textContent = number(shownPrice);
   elements('quoteChange').textContent =
     signed(difference) + ' (' + signed((difference / reference) * 100) + '%)';
@@ -808,6 +880,8 @@ function sessionConfig() {
   const a = s.account;
   return {
     marketId: s.marketId,
+    kind: s.instrumentKind,
+    simulationReference: s.simulationReference,
     base: s.base,
     seed: s.seed,
     customBars: s.customBars,
@@ -873,7 +947,7 @@ function randomPeriod() {
   restartAt(start);
   notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone) + '，原训练已存档');
 }
-const preferred = ['5m', '15m', '30m', '1H', '1D'];
+const shortcuts = ['5m', '30m', '1D'];
 function effectivePeriod(p) {
   return p === 'BASE' ? s.base : p;
 }
@@ -881,27 +955,43 @@ function renderPeriods() {
   const options = s.live
     ? baseIDs.map((id, i) => ({ id: id === s.base ? 'BASE' : id, label: baseNames[i] }))
     : frameChoices;
-  const pin = options.filter((o) => preferred.includes(effectivePeriod(o.id)) || o.id === s.period);
-  if (!pin.some((o) => o.id === 'BASE') && !s.live) pin.unshift(options[0]);
+  const highlighted = options.find((o) => o.id === s.period);
+  const buttons = shortcuts.map((id) => {
+    const label = baseNames[baseIDs.indexOf(id)];
+    // A CSV's native interval has the internal id BASE but exposes the inferred label.
+    const option = options.find((o) => o.label === label);
+    const active = !!option && option.id === s.period;
+    const state = option ? 'data-period="' + option.id + '"' : 'disabled title="原始行情不支持此周期"';
+    return (
+      '<button ' +
+      state +
+      ' aria-pressed="' +
+      active +
+      '" class="' +
+      (active ? 'active' : '') +
+      '">' +
+      label +
+      '</button>'
+    );
+  });
+  const showExtra =
+    highlighted && !shortcuts.some((id) => baseNames[baseIDs.indexOf(id)] === highlighted.label);
   const select =
     '<select id="allPeriods" aria-label="所有K线周期"><option value="">更多周期</option>' +
-    options.map((o) => '<option value="' + o.id + '">' + o.label + '</option>').join('') +
-    '</select>';
-  elements('periodButtons').innerHTML =
-    pin
+    options
       .map(
         (o) =>
-          '<button data-period="' +
+          '<option value="' +
           o.id +
-          '" class="' +
-          (s.period === o.id ? 'active' : '') +
-          '" aria-pressed="' +
-          (s.period === o.id) +
-          '">' +
+          '"' +
+          (showExtra && o.id === s.period ? ' selected' : '') +
+          '>' +
           o.label +
-          '</button>',
+          '</option>',
       )
-      .join('') + select;
+      .join('') +
+    '</select>';
+  elements('periodButtons').innerHTML = buttons.join('') + select;
 }
 function currentDrawingKey(period = s.period) {
   return s.live ? 'live:' + effectivePeriod(period) : period;
@@ -1142,6 +1232,7 @@ async function startFeed({
       }
     }
     if (version !== loadVersion) return;
+    if (kind === 'future' && dataset.quote) watch.set(marketId, { quote: dataset.quote });
     const contract = dataset.contract
       ? { ...dataset.contract, maintenanceRate: dataset.contract.exchangeMarginRate }
       : undefined;
@@ -1249,7 +1340,10 @@ async function refreshWatch() {
   for (const m of wanted) {
     try {
       const old = watch.get(m.id);
-      if (old?.values?.length && !old.dailySource) {
+      if (domestic(m.id)) {
+        const quote = await fetchEastmoneyQuote(m.id, { contract: 'active' });
+        watch.set(m.id, { quote });
+      } else if (old?.values?.length && !old.dailySource) {
         const quote = await fetchEastmoneyQuote(m.id, { contract: 'index' });
         watch.set(m.id, { quote, values: [...old.values.slice(0, -1), quote.price] });
       } else {
@@ -1272,7 +1366,7 @@ async function refreshWatch() {
     } catch {}
   }
   try {
-    localStorage.setItem('wavelab-index-watch', JSON.stringify([...watch]));
+    localStorage.setItem(watchStore, JSON.stringify([...watch]));
   } catch {}
 }
 document.addEventListener('change', (e) => {
@@ -1296,7 +1390,22 @@ function context() {
     market,
     session: s,
     markets: MARKETS,
-    onNew: (config) => activate(makeSession(config)),
+    onNew: (config) => {
+      if (config.kind === 'future') {
+        config.contract = futuresTerms(config.marketId);
+        if (!config.customBars) {
+          const quote = watch.get(config.marketId).quote;
+          config.simulationReference = {
+            symbol: quote.symbol,
+            tradeDate: quote.tradeDate,
+            price: quote.price,
+            tickSize: config.contract.tickSize,
+            index: config.startIndex,
+          };
+        }
+      }
+      return activate(makeSession(config));
+    },
     onSwitch: switchMarket,
     onFeed: startFeed,
     onJournal: () => setView('journal'),
@@ -1544,8 +1653,9 @@ try {
     store = null;
   }
   try {
-    for (const [id, item] of JSON.parse(localStorage.getItem('wavelab-index-watch') || '[]'))
-      if (byId(id) && item?.quote?.price) watch.set(id, item);
+    for (const [id, item] of JSON.parse(localStorage.getItem(watchStore) || '[]'))
+      if (byId(id) && item?.quote?.price && item.quote.tradeDate >= watch.get(id).quote.tradeDate)
+        watch.set(id, item);
   } catch {}
   const restored = applyRecovery(active);
   const emptyLegacy =
@@ -1557,7 +1667,16 @@ try {
     !Object.values(restored.drawings || {}).some((x) => x.length) &&
     restored.cursor === restored.start &&
     !restored.periodSchema;
-  if (restored && !emptyLegacy) {
+  // Older generated index-point accounts used 1× implicitly. Preserve their
+  // trades as an archive and open the new default in a separate futures account.
+  const implicitSpot =
+    restored &&
+    domestic(restored.marketId) &&
+    !restored.instrumentKind &&
+    !restored.account.contract &&
+    !restored.feed &&
+    !restored.customBars;
+  if (restored && !emptyLegacy && !implicitSpot) {
     await activate(restored);
     if (s.live) refreshLive();
   } else {
@@ -1574,6 +1693,7 @@ try {
       await openAnchor({ marketId: id, kind: domestic(id) ? 'future' : 'spot' });
       notify('东方财富直连暂不可用，已从标注日期的收盘价开始模拟推演。');
     }
+    if (implicitSpot && !emptyLegacy) notify('已打开主连期货训练，原指数点位账户可在交易复盘中恢复。');
   }
   refreshWatch();
   if (location.hash === '#journal') setView('journal');

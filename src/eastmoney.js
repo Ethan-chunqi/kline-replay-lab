@@ -236,6 +236,26 @@ async function activeSymbols(prefix, signal) {
   return resolved.symbol;
 }
 
+export function futuresTerms(marketId, symbol) {
+  const spec = SERIES[marketId];
+  if (!spec?.prefix) throw new Error('此市场没有国内股指期货合约。');
+  return {
+    symbol: symbol || spec.prefix,
+    continuous: spec.prefix + 'M',
+    multiplier: spec.multiplier,
+    tickSize: 0.2,
+    marginRate: 0.15,
+    exchangeMarginRate: 0.12,
+    maintenanceRate: 0.12,
+    sourceUrl: MARGIN_URL,
+    marginSourceUrl: MARGIN_URL,
+    exchangeMarginSourceUrl: EXCHANGE_MARGIN_SOURCE,
+    specSourceUrl: CONTRACT_RULES[spec.prefix],
+    asOf: MARGIN_DATE,
+    marginAsOf: MARGIN_DATE,
+  };
+}
+
 async function resolve(marketId, contract, signal) {
   const spec = SERIES[marketId];
   if (!spec) throw new Error('此市场暂未接入东方财富。');
@@ -250,19 +270,7 @@ async function resolve(marketId, contract, signal) {
     ...spec,
     secid: '220.' + symbol,
     symbol,
-    contract: {
-      symbol,
-      multiplier: spec.multiplier,
-      tickSize: 0.2,
-      marginRate: 0.15,
-      exchangeMarginRate: 0.12,
-      sourceUrl: MARGIN_URL,
-      marginSourceUrl: MARGIN_URL,
-      exchangeMarginSourceUrl: EXCHANGE_MARGIN_SOURCE,
-      specSourceUrl: CONTRACT_RULES[spec.prefix],
-      asOf: MARGIN_DATE,
-      marginAsOf: MARGIN_DATE,
-    },
+    contract: futuresTerms(marketId, symbol),
   };
 }
 
