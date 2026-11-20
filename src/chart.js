@@ -124,7 +124,7 @@ export function createTradingChart(container, callbacks = {}) {
   Object.assign(root.style, { position: 'relative', width: '100%', height: '100%', overflow: 'hidden' });
   root.setAttribute('role', 'img');
   root.tabIndex = 0;
-  root.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+  root.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown Delete Backspace');
   let colors = activePalette();
   const initial = chartColors(colors);
   root.setAttribute('aria-label', colors.description);
@@ -180,6 +180,8 @@ export function createTradingChart(container, callbacks = {}) {
   let priceLevels = [],
     drawLines = [];
   let selectedTrend = -1,
+    anchorFraction = 0.5,
+    lastAnchor = null,
     edit = null,
     pointerStart = null;
   let redrawTrends = () => {};
@@ -232,6 +234,8 @@ export function createTradingChart(container, callbacks = {}) {
     if (!(event.buttons & 2)) return finishPan();
     const dx = event.clientX - pan.x,
       dy = event.clientY - pan.y;
+    if (!pan.dragged && Math.max(Math.abs(dx), Math.abs(dy)) < 3) return;
+    pan.dragged = true;
     timeAxis.scrollToPosition(pan.offset - dx / pan.spacing, false);
     if (Math.abs(dy) >= 3 || pan.movedY) {
       pan.movedY = true;
@@ -241,7 +245,15 @@ export function createTradingChart(container, callbacks = {}) {
   });
   for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
     root.addEventListener(eventName, (event) => {
-      if (pan?.id === event.pointerId) finishPan();
+      if (pan?.id !== event.pointerId) return;
+      const singleClick = eventName === 'pointerup' && !pan.dragged && tool === 'crosshair' &&
+        Math.max(Math.abs(event.clientX - pan.x), Math.abs(event.clientY - pan.y)) < 3;
+      finishPan();
+      if (singleClick) {
+        const bounds = root.getBoundingClientRect();
+        const hit = hitTrend(event.clientX - bounds.left, event.clientY - bounds.top);
+        if (hit) selectTrend(hit.index, hit.fraction);
+      }
     });
   }
   root.addEventListener('contextmenu', (event) => {
@@ -250,6 +262,10 @@ export function createTradingChart(container, callbacks = {}) {
   window.addEventListener('blur', finishPan);
   root.addEventListener('keydown', (event) => {
     if (event.target !== root || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      if (deleteSelectedTrend()) event.preventDefault();
+      return;
+    }
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
     event.preventDefault();
     zoom(event.key === 'ArrowUp' ? 1.2 : 1 / 1.2);
@@ -286,16 +302,44 @@ export function createTradingChart(container, callbacks = {}) {
       const endpoint = segment.findIndex((p) => Math.hypot(x - p.x, y - p.y) <= radius + 1);
       const distance = Math.hypot(x - a.x - t * dx, y - a.y - t * dy);
       if (distance > radius + trendStyle(drawings[i]).width / 2) continue;
-      if (endpoint >= 0 && i === selectedTrend) return { index: i, endpoint, distance };
-      if (!best || distance < best.distance) best = { index: i, endpoint, distance };
+      const hit = { index: i, endpoint, distance, fraction: endpoint >= 0 ? endpoint : t };
+      if (endpoint >= 0 && i === selectedTrend) return hit;
+      if (!best || distance < best.distance) best = hit;
     }
     return best;
+  }
+  function visibleAnchor([a, b], { width, height }) {
+    // Retain the clicked location along the line. If it scrolls past an edge,
+    // place the action at the nearest point on the remaining visible segment.
+    let from = 0,
+      to = 1;
+    for (const [start, end, limit] of [[a.x, b.x, width - 1], [a.y, b.y, height - 1]]) {
+      const delta = end - start;
+      if (!delta) {
+        if (start < 0 || start > limit) return null;
+        continue;
+      }
+      const first = -start / delta,
+        last = (limit - start) / delta;
+      from = Math.max(from, Math.min(first, last));
+      to = Math.min(to, Math.max(first, last));
+      if (from > to) return null;
+    }
+    const t = Math.max(from, Math.min(anchorFraction, to));
+    return { x: Math.round(a.x + (b.x - a.x) * t), y: Math.round(a.y + (b.y - a.y) * t), width, height };
+  }
+  function publishAnchor(point) {
+    if (point?.x === lastAnchor?.x && point?.y === lastAnchor?.y &&
+        point?.width === lastAnchor?.width && point?.height === lastAnchor?.height) return;
+    lastAnchor = point;
+    callbacks.onDrawingAnchor?.(point);
   }
   // The same chart-native coordinates drive both painting and hit testing.
   // Trend annotations never add timestamps or change the data's price range.
   const trendRenderer = {
     draw(target) {
-      target.useMediaCoordinateSpace(({ context: ctx }) => {
+      target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+        let anchor = null;
         drawings.forEach((line, i) => {
           const pts = screenPoints(line);
           if (!pts) return;
@@ -308,6 +352,7 @@ export function createTradingChart(container, callbacks = {}) {
           ctx.lineTo(pts[1].x, pts[1].y);
           ctx.stroke();
           if (selectedTrend !== i) return;
+          anchor = visibleAnchor(pts, mediaSize);
           ctx.fillStyle = colors.background;
           ctx.lineWidth = 2;
           for (const p of pts) {
@@ -317,6 +362,7 @@ export function createTradingChart(container, callbacks = {}) {
             ctx.stroke();
           }
         });
+        publishAnchor(anchor);
       });
     },
   };
@@ -337,10 +383,13 @@ export function createTradingChart(container, callbacks = {}) {
       };
     },
   });
-  function selectTrend(index) {
-    if (index === selectedTrend) return;
+  function selectTrend(index, fraction = 0.5) {
+    if (index === selectedTrend && (index < 0 || fraction === anchorFraction)) return;
+    const changed = index !== selectedTrend;
     selectedTrend = index;
-    callbacks.onDrawingSelection?.(index >= 0 ? trendStyle(drawings[index]) : null);
+    anchorFraction = fraction;
+    if (changed) callbacks.onDrawingSelection?.(index >= 0 ? trendStyle(drawings[index]) : null);
+    if (index < 0) publishAnchor(null);
     redrawTrends();
   }
   function setTrendStyle(style) {
@@ -566,7 +615,7 @@ export function createTradingChart(container, callbacks = {}) {
       const x = event.clientX - bounds.left,
         y = event.clientY - bounds.top;
       const hit = hitTrend(x, y, event.pointerType === 'touch' ? 14 : 7);
-      selectTrend(hit ? hit.index : -1);
+      selectTrend(hit ? hit.index : -1, hit?.fraction);
       if (!hit) return;
       event.preventDefault();
       event.stopPropagation();
@@ -680,7 +729,7 @@ export function createTradingChart(container, callbacks = {}) {
     }
     const addedTrend = tool === 'trend';
     setTool('crosshair');
-    if (addedTrend) selectTrend(drawings.length - 1);
+    if (addedTrend) selectTrend(drawings.length - 1, 1);
     callbacks.onDrawingChange?.(getDrawings());
   });
   chart.subscribeCrosshairMove((event) => {
@@ -708,6 +757,7 @@ export function createTradingChart(container, callbacks = {}) {
     ready = false;
     finishPan();
     finishEdit(false);
+    publishAnchor(null);
     window.removeEventListener('blur', cancelEdit);
     window.removeEventListener('blur', finishPan);
     document.removeEventListener('wavelab-theme', applyTheme);

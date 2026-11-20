@@ -1,7 +1,9 @@
 import { MARKETS, generateBars } from './market.js';
 import { timeframeOptions, periodBars, executionTime, nextDisplayCursor } from './periods.js';
 import { anchoredScenario, SNAPSHOT_QUOTES } from './anchor.js';
-import { pickRandomStart } from './random-period.js';
+import { pickRandomStart, rankArchivePeriods, visitedBarRanges } from './random-period.js';
+import { archivePeriods, loadArchivePeriod } from './replay-archive.js';
+import { indexArchivePeriods, loadIndexArchivePeriod } from './index-replay.js';
 import { loadChartFeed } from './feed-service.js';
 import { fetchEastmoneyQuote, futuresTerms } from './eastmoney.js';
 import { tradingBar, applyLiveQuote } from './live.js';
@@ -69,6 +71,7 @@ let s,
   loadVersion = 0,
   quoteBusy = false,
   loadBusy = false,
+  randomBusy = false,
   refreshIssue = '',
   frameChoices = [];
 const domestic = (id) => ['csi1000', 'csi500', 'csi300'].includes(id);
@@ -269,6 +272,7 @@ function activate(next) {
   s.instrumentKind ??= s.account.contract ? 'future' : 'spot';
   loadVersion++;
   loadBusy = false;
+  randomBusy = false;
   refreshIssue = '';
   if (!s.periodSchema) {
     if (s.period === '1D') s.period = 'BASE';
@@ -279,6 +283,14 @@ function activate(next) {
   market = displayMarket();
   bars = getBars(s);
   frameChoices = timeframeOptions(s.base, bars, market.region);
+  const range = elements('practiceRange');
+  range.hidden = s.live;
+  if (!s.live) {
+    const coverage = s.feed?.archiveYears;
+    const day = (b) => fmtTime(b.time, market.timeZone).slice(0, 10);
+    range.textContent = (coverage ? '可抽年份 ' + coverage + '　·　' : '') +
+      '本段行情 ' + day(bars[0]) + ' 至 ' + day(bars.at(-1));
+  }
   if (!frameChoices.some((x) => x.id === s.period)) s.period = 'BASE';
   side = 'buy';
   tab = 'position';
@@ -723,7 +735,8 @@ function renderPlay() {
       '" target="_blank" rel="noopener">' +
       esc(s.feed.tradeDate) +
       ' 东方财富</a><br>其余走势为模拟生成';
-  elements('randomBtn').disabled = bars.length < 3 && !s.feed;
+  elements('randomBtn').disabled = loadBusy || randomBusy || (bars.length < 3 && !s.feed);
+  elements('randomLabel').textContent = randomBusy ? '抽取中…' : '随机时段';
   if (s.live)
     elements('feedMeta').innerHTML =
       (s.account.contract ? '公开行情或延时15分钟 · ' : '') +
@@ -910,48 +923,144 @@ function restartAt(startIndex) {
   next.speed = s.speed;
   return activate(next);
 }
-function randomPeriod() {
-  if (bars.length < 30 && s.feed && !s.feed.anchored) {
-    const cfg = {
-      marketId: s.marketId,
-      kind: s.feed.kind,
-      base: '5m',
-      live: false,
-      initialCash: s.account.initialCash,
-      feeBps: s.account.feeBps,
-      slippageBps: s.account.slippageBps,
-      allowShort: s.account.allowShort,
+// Calendar days are compared across chart intervals and across prior sessions.
+const dayFormatters = new Map();
+function marketDay(time, marketId) {
+  if (typeof time === 'string') return time.slice(0, 10);
+  const zone = byId(marketId).timeZone;
+  if (!dayFormatters.has(zone)) {
+    dayFormatters.set(zone, new Intl.DateTimeFormat('sv-SE', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }));
+  }
+  return dayFormatters.get(zone).format(time * 1000);
+}
+function practiceHistory(marketId, kind) {
+  return [...sessions.values()].filter((session) => session.marketId === marketId && !session.live &&
+    session.feed && !session.feed.anchored && Boolean(session.account.contract) === (kind === 'future'));
+}
+function chooseStart(series, marketId, history, options = {}) {
+  const day = (time) => marketDay(time, marketId);
+  const spans = [];
+  for (const prior of history) {
+    const rows = prior.customBars || (prior.scenarioId === s?.scenarioId ? series : null);
+    if (rows?.[prior.start] && rows[prior.cursor]) spans.push([day(rows[prior.start].time), day(rows[prior.cursor].time)]);
+  }
+  return pickRandomStart({ length: series.length, blockedRanges: visitedBarRanges(series, spans, day), ...options });
+}
+const archiveFailures = new Map();
+async function readReplayArchive(marketId, kind, display, isCurrent) {
+  const futures = kind === 'future';
+  const list = futures ? archivePeriods : indexArchivePeriods;
+  const load = futures ? loadArchivePeriod : loadIndexArchivePeriod;
+  const preferred = ['1D', '1W', '1M', '1Q', '1Y'].includes(display) ? '1D' :
+    ['1m', '3m'].includes(display) ? '1m' : '5m';
+  let base = preferred, candidates = list(marketId, base);
+  if (!candidates.length && display !== base) {
+    base = display;
+    candidates = list(marketId, base);
+  }
+  if (!candidates.length) return null;
+  const history = practiceHistory(marketId, kind);
+  const years = candidates.map((item) => item.year);
+  const coverage = Math.min(...years) + '–' + Math.max(...years);
+  const visits = history.map((session) => session.feed.archivePeriod ||
+    candidates.find((item) => item.symbol === session.feed.symbol && futures)).filter(Boolean);
+  const ordered = rankArchivePeriods(candidates, visits).filter((item) =>
+    (archiveFailures.get(base + '/' + item.key) || 0) < Date.now());
+  for (const item of ordered.slice(0, 3)) {
+    if (!isCurrent()) return null;
+    try {
+      const result = await load(marketId, base, item, { signal: AbortSignal.timeout(8000) });
+      if (!result || result.bars.length < 20) throw Error('样本不足');
+      return { ...result, base: result.base || base, archivePeriod: item, archiveYears: coverage };
+    } catch {
+      if (!isCurrent()) return null;
+      archiveFailures.set(base + '/' + item.key, Date.now() + 120000);
+    }
+  }
+  // Previously visited contracts still have unpracticed days when a provider
+  // is offline. Reuse their verified candles, then pick a fresh day normally.
+  for (const item of rankArchivePeriods(candidates, visits)) {
+    const cached = history.find((entry) => entry.feed.archivePeriod?.key === item.key &&
+      entry.base === base && entry.customBars?.length >= 20);
+    if (cached) return {
+      bars: cached.customBars, base, symbol: cached.feed.symbol, name: cached.feed.name,
+      contract: cached.feed.contract, historySource: cached.feed.historySource,
+      sourceUrl: cached.feed.quoteUrl, tradeDate: cached.feed.tradeDate,
+      archivePeriod: item, archiveYears: coverage, historyCached: true,
     };
-    const version = loadVersion + 1;
-    startFeed(cfg).catch(async () => {
-      if (loadVersion !== version) return;
-      try {
-        await startFeed({ ...cfg, base: '1D' });
-        if (s.marketId === cfg.marketId && !s.live) notify('分钟历史暂缺，已跳到真实日线的随机时段。');
-        return;
-      } catch {
-        if (loadVersion !== version + 1) return;
-      }
-      await openAnchor(cfg);
-      randomPeriod();
-      notify('历史连接暂不可用，已跳到收盘价推演的随机时段；原持仓已存档。');
-    });
-    return;
   }
-  if (bars.length < 3) {
-    notify('当前行情长度不足以切换时段');
-    return;
-  }
-  const group = s.scenarioId || s.id;
-  const blocked = [...sessions.values()].filter((x) => (x.scenarioId || x.id) === group).map((x) => x.start);
-  const start = pickRandomStart({
-    length: bars.length,
-    currentIndex: s.cursor,
-    previousStart: s.start,
-    blockedStarts: blocked,
+  return null;
+}
+function replaySession(config, dataset, display) {
+  const { marketId, kind } = config;
+  const contract = dataset.contract ? { ...dataset.contract, maintenanceRate: dataset.contract.exchangeMarginRate } : null;
+  const history = practiceHistory(marketId, kind);
+  return makeSession({
+    marketId, kind, base: dataset.base, period: dataset.base === display ? 'BASE' : display,
+    customBars: dataset.bars, contract, startIndex: chooseStart(dataset.bars, marketId, history),
+    initialCash: config.initialCash ?? (contract ? 1000000 : 100000), feeBps: config.feeBps,
+    slippageBps: config.slippageBps, allowShort: config.allowShort,
+    feed: {
+      kind, symbol: dataset.symbol, name: dataset.name, historySource: dataset.historySource,
+      quoteUrl: dataset.sourceUrl, tradeDate: dataset.tradeDate, contract,
+      archivePeriod: dataset.archivePeriod, archiveYears: dataset.archiveYears, historyCached: !!dataset.historyCached,
+    },
   });
-  restartAt(start);
-  notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone) + '，原训练已存档');
+}
+async function randomPeriod() {
+  if (randomBusy || loadBusy) return;
+  stop();
+  const original = s, group = s.scenarioId || s.id;
+  const version = ++loadVersion;
+  const isCurrent = () => s === original && version === loadVersion;
+  randomBusy = version;
+  renderPlay();
+  try {
+    const cfg = sessionConfig();
+    const display = effectivePeriod(s.period);
+    if (s.feed) {
+      const archive = await readReplayArchive(s.marketId, cfg.kind, display, isCurrent);
+      if (!isCurrent()) return;
+      if (archive) {
+        await activate(replaySession(cfg, archive, display));
+        notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone) + ' · ' + market.symbol);
+        return;
+      }
+      // Ask for deeper data only when leaving a live chart. Replays and custom
+      // imports already contain the exact series used for their trades.
+      if (s.live) {
+        try {
+          const deep = await loadChartFeed(s.marketId, s.base, {
+            contract: cfg.kind === 'future' ? s.feed.symbol : 'index',
+            limit: 10000, historyOnly: true, signal: AbortSignal.timeout(8000),
+          });
+          if (!isCurrent()) return;
+          if (deep.bars.length > Math.max(29, bars.length)) {
+            await activate(replaySession(cfg, { ...deep, base: s.base }, display));
+            notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone));
+            return;
+          }
+        } catch { if (!isCurrent()) return; }
+      }
+    }
+    if (bars.length < 3) {
+      notify('此周期暂时没有足够的历史 K 线。可切换周期后再抽取。');
+      return;
+    }
+    const related = [...sessions.values()].filter((other) => (other.scenarioId || other.id) === group);
+    const prior = s.feed && !s.feed.anchored ? practiceHistory(s.marketId, cfg.kind) : related;
+    const start = chooseStart(bars, s.marketId, prior, {
+      currentIndex: s.cursor, previousStart: s.start, blockedStarts: related.map((other) => other.start),
+    });
+    await restartAt(start);
+    notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone) + ' · 本段行情内抽取');
+  } catch (error) {
+    if (isCurrent()) notify('抽取未完成：' + error.message);
+  } finally {
+    if (randomBusy === version) { randomBusy = false; renderPlay(); }
+  }
 }
 const shortcuts = ['5m', '30m', '1D'];
 function effectivePeriod(p) {
@@ -1173,9 +1282,18 @@ async function startFeed({
   elements('todayBtn').disabled = true;
   stop();
   try {
+    if (!live) {
+      const desired = period === 'BASE' ? base : period;
+      const archived = await readReplayArchive(marketId, kind, desired, () => loadVersion === version);
+      if (loadVersion !== version) return;
+      if (archived) {
+        await activate(replaySession({ marketId, kind, initialCash, feeBps, slippageBps, allowShort }, archived, desired));
+        return;
+      }
+    }
     const request = {
       contract: kind === 'future' ? 'active' : 'index',
-      limit: base === '1D' ? 5000 : 720,
+      limit: !live ? 10000 : base === '1D' ? 5000 : 720,
       historyOnly: !live,
     };
     let dataset,
@@ -1254,7 +1372,8 @@ async function startFeed({
       tradeDate: dataset.tradeDate,
       contract,
     };
-    const startIndex = live ? dataset.bars.length - 1 : pickRandomStart({ length: dataset.bars.length });
+    const startIndex = live ? dataset.bars.length - 1 :
+      chooseStart(dataset.bars, marketId, practiceHistory(marketId, kind));
     const next = makeSession({
       marketId,
       base,
@@ -1634,11 +1753,22 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 function initChart() {
+  const quickDelete = elements('trendQuickDelete');
   chart = createTradingChart(elements('plot'), {
     onHover: (b) => writeOhlc(b || aggregated.at(-1)),
+    onDrawingAnchor: (point) => {
+      quickDelete.hidden = !point;
+      if (!point) return;
+      quickDelete.style.setProperty('--anchor-x', point.x + 'px');
+      quickDelete.style.setProperty('--anchor-y', point.y + 'px');
+      quickDelete.style.setProperty('--pane-width', point.width + 'px');
+      quickDelete.style.setProperty('--pane-height', point.height + 'px');
+      quickDelete.classList.toggle('below-anchor', point.y < quickDelete.offsetHeight + 14);
+    },
     onDrawingSelection: (style) => {
       elements('trendEditor').hidden = !style;
       if (!style) return;
+      if (elements('toast').textContent === '在图中依次点选趋势线的两个端点') elements('toast').classList.remove('toast-on');
       elements('trendColor').value = style.color;
       elements('trendWidth').value = String(style.width);
       for (const button of all('[data-trend-color]')) {
@@ -1669,6 +1799,9 @@ function initChart() {
     chart.setTrendStyle({ color: event.target.value }),
   );
   elements('deleteTrend').addEventListener('click', () => chart.deleteSelectedTrend());
+  quickDelete.addEventListener('click', () => {
+    if (chart.deleteSelectedTrend()) elements('plot').querySelector('[tabindex="0"]')?.focus({ preventScroll: true });
+  });
 }
 try {
   initChart();

@@ -1834,6 +1834,38 @@ html[data-theme='dark'] #toast {
 #plot [data-panning] * {
   cursor: grabbing !important;
 }
+.trend-quick-delete {
+  --button-width: 62px;
+  --button-height: 30px;
+  position: absolute;
+  z-index: 3;
+  left: clamp(4px, calc(var(--anchor-x) - var(--button-width) / 2), calc(var(--pane-width) - var(--button-width) - 4px));
+  top: clamp(4px, calc(var(--anchor-y) - var(--button-height) - 12px), calc(var(--pane-height) - var(--button-height) - 4px));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: var(--button-width);
+  height: var(--button-height);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  box-shadow: 0 2px 7px rgb(0 0 0 / 20%);
+  color: var(--ink);
+  font-size: 12px;
+  touch-action: manipulation;
+}
+.trend-quick-delete.below-anchor {
+  top: clamp(4px, calc(var(--anchor-y) + 12px), calc(var(--pane-height) - var(--button-height) - 4px));
+}
+.trend-quick-delete:hover, .trend-quick-delete:focus-visible {
+  border-color: var(--red);
+  color: var(--red);
+}
+.trend-quick-delete svg { width: 14px; height: 14px; }
+@media (pointer: coarse) {
+  .trend-quick-delete { --button-height: 40px; --button-width: 70px; }
+}
 .trend-editor {
   display: flex;
   flex-wrap: wrap;
@@ -1848,6 +1880,13 @@ html[data-theme='dark'] #toast {
 .trend-editor strong {
   color: var(--ink);
   font-weight: 600;
+}
+.practice-range {
+  padding: 6px 14px;
+  border-top: 1px solid var(--soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .trend-swatches,
 .trend-width {

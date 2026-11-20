@@ -104,7 +104,11 @@
                 <i data-i="trash"></i>
               </button>
             </div>
-            <div id="plot"></div>
+            <div id="plot">
+              <button type="button" id="trendQuickDelete" class="trend-quick-delete" title="删除这条趋势线（Delete）" hidden>
+                <i data-i="trash" aria-hidden="true"></i>删除
+              </button>
+            </div>
           </div>
           <div class="pencil-row">
             <span>画线</span><button data-tool="trend"><i data-i="trend"></i>趋势线</button
@@ -135,7 +139,7 @@
                 class="random-btn"
                 title="存档当前训练，从另一段行情空仓开练"
               >
-                <i data-i="shuffle"></i>随机时段
+                <i data-i="shuffle"></i><span id="randomLabel">随机时段</span>
               </button>
               <button
                 class="play-btn"
@@ -160,6 +164,7 @@
               <progress id="progress" max="100" value="0"></progress>
             </div>
           </div>
+          <div id="practiceRange" class="practice-range" hidden></div>
         </section>
         <aside class="panel ticket">
           <div class="panel-heading">
