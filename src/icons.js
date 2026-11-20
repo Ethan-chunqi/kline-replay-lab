@@ -2,6 +2,8 @@ const paths = {
   terminal: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 15v-4m5 6V7m5 8V9"/>',
   journal:
     '<path d="M4 5.5c3-1.5 5.5-1 8 1.2 2.5-2.2 5-2.7 8-1.2v13c-3-1.4-5.5-1-8 1-2.5-2-5-2.4-8-1zM12 7v12"/>',
+  shuffle:
+    '<path d="M3 6h3c4 0 6 12 10 12h5m-4-3 4 3-4 3M3 18h3c1.7 0 3-2 4.3-4.5M14 8c1-1.4 1.8-2 3-2h4m-4-3 4 3-4 3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.2 9a3 3 0 1 1 4.7 2.6c-1.2.8-2 1.3-2 2.7m0 2.3h.1"/>',

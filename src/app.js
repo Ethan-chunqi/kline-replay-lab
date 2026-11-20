@@ -1,5 +1,10 @@
 import { MARKETS, generateBars } from './market.js';
-import { aggregateBars, mapToPeriod } from './import.js';
+import { timeframeOptions, periodBars, executionTime, nextDisplayCursor } from './periods.js';
+import { anchoredScenario, SNAPSHOT_QUOTES } from './anchor.js';
+import { pickRandomStart } from './random-period.js';
+import { loadChartFeed } from './feed-service.js';
+import { fetchEastmoneyBars, fetchEastmoneyQuote } from './eastmoney.js';
+import { tradingBar, applyLiveQuote } from './live.js';
 import {
   createAccount,
   getSnapshot,
@@ -11,7 +16,7 @@ import {
 } from './engine.js';
 import { createTradingChart } from './chart.js';
 import { renderJournal } from './journal.js';
-import { openNew, openHelp, openMarkets, openIndicators } from './dialogs.js';
+import { openNew, openHelp, openMarkets } from './dialogs.js';
 import { openStorage } from './storage.js';
 import { icon } from './icons.js';
 
@@ -45,8 +50,7 @@ const fmtTime = (t, zone) =>
 const ordersText = { market: '市价', limit: '限价', stop: '停止', stopLimit: '停止限价' };
 const orderStatus = { pending: '待成交', filled: '已成交', cancelled: '已撤单', rejected: '已拒绝' };
 const seedNumber = () => crypto.getRandomValues(new Uint32Array(1))[0];
-const sessions = new Map(),
-  demo = new Map();
+const sessions = new Map();
 let s,
   market,
   bars = [],
@@ -61,7 +65,33 @@ let s,
   view = 'terminal',
   cleanJournal,
   toastTimer,
-  saveVersion = 0;
+  saveVersion = 0,
+  loadVersion = 0,
+  quoteBusy = false,
+  loadBusy = false,
+  refreshIssue = '',
+  frameChoices = [];
+const domestic = (id) => ['csi1000', 'csi500', 'csi300'].includes(id);
+const watch = new Map(Object.entries(SNAPSHOT_QUOTES).map(([id, quote]) => [id, { quote, pinned: true }]));
+const markBar = () => tradingBar(s, bars[s.cursor]);
+const unitName = () => (s.account.contract ? '手' : '单位');
+const baseIDs = ['1m', '3m', '5m', '10m', '15m', '30m', '1H', '2H', '4H', '1D', '1W', '1M', '1Q', '1Y'];
+const baseNames = [
+  '1分',
+  '3分',
+  '5分',
+  '10分',
+  '15分',
+  '30分',
+  '1小时',
+  '2小时',
+  '4小时',
+  '日线',
+  '周线',
+  '月线',
+  '季线',
+  '年线',
+];
 for (const i of all('[data-i]')) i.innerHTML = icon(i.dataset.i);
 function notify(message) {
   elements('toast').textContent = message;
@@ -138,10 +168,10 @@ function makeSession(config = {}) {
     customName = '',
   } = config;
   const series = getBars({ marketId, base, seed, customBars });
-  const start = Math.max(0, Math.min(startIndex, series.length - 2));
+  const start = config.live ? series.length - 1 : Math.max(0, Math.min(startIndex, series.length - 2));
   const account = createAccount(config);
-  advanceBar(account, series[start]);
-  return {
+  if (!config.live) advanceBar(account, series[start]);
+  const created = {
     id: crypto.randomUUID(),
     marketId,
     base,
@@ -152,24 +182,51 @@ function makeSession(config = {}) {
     customName,
     account,
     notes: [],
-    period: '1D',
-    indicators: ['MA', 'VOL'],
+    period: config.period || 'BASE',
+    periodSchema: 2,
+    feed: config.feed || null,
+    live: !!config.live,
+    scenarioId: config.scenarioId || crypto.randomUUID(),
     type: 'candles',
     drawings: {},
     speed: '1',
     created: Date.now(),
     updated: Date.now(),
   };
+  if (config.live) {
+    applyBoardQuote(created, config.quote);
+    created.entryMark = config.quote.price;
+    created.markHistory = [{ time: created.account.lastTime, price: config.quote.price }];
+  }
+  return created;
 }
 function displayMarket(session = s) {
   const profile = byId(session.marketId);
+  if (session.feed)
+    return {
+      ...profile,
+      name: session.feed.name,
+      symbol: session.feed.symbol,
+      exchange: session.account.contract ? 'CFFEX' : profile.exchange,
+    };
   return session.customBars ? { ...profile, name: session.customName || '自选行情', symbol: 'CSV' } : profile;
 }
 function activate(next) {
   stop();
   s = next;
+  loadVersion++;
+  loadBusy = false;
+  refreshIssue = '';
+  if (!s.periodSchema) {
+    if (s.period === '1D') s.period = 'BASE';
+    s.periodSchema = 2;
+  }
+  s.type = 'candles';
+  delete s.indicators;
   market = displayMarket();
   bars = getBars(s);
+  frameChoices = timeframeOptions(s.base, bars, market.region);
+  if (!frameChoices.some((x) => x.id === s.period)) s.period = 'BASE';
   side = 'buy';
   tab = 'position';
   elements('orderType').value = 'market';
@@ -183,20 +240,18 @@ function activate(next) {
   setView('terminal');
   return save();
 }
-function initDemo(id) {
-  if (!demo.has(id)) demo.set(id, generateBars(id, defaultSeed, defaultStart + 1, '1D'));
-  return demo.get(id);
-}
-function latestMarket(id) {
-  return [...sessions.values()]
-    .filter((st) => st.marketId === id && !st.customBars)
-    .sort((a, b) => b.updated - a.updated)[0];
-}
 function switchMarket(id) {
   if (!byId(id)) return;
-  if (s.marketId === id && !s.customBars) return;
-  const prev = latestMarket(id);
-  return activate(prev || makeSession({ marketId: id, seed: defaultSeed }));
+  if (s.marketId === id && s.feed && !s.feed.anchored) return;
+  const past = [...sessions.values()]
+    .filter((x) => x.marketId === id && x.feed)
+    .sort((a, b) => b.updated - a.updated)[0];
+  if (past) return activate(past);
+  const cfg = { marketId: id, kind: domestic(id) ? 'future' : 'spot', base: '5m', live: true };
+  return startFeed(cfg).catch((err) => {
+    if (s.marketId !== id) openAnchor(cfg);
+    notify(err.message + ' 可用收盘价推演。');
+  });
 }
 function spark(values, n, id) {
   const min = Math.min(...values),
@@ -206,7 +261,7 @@ function spark(values, n, id) {
     33 - ((v - min) / span) * 27,
   ]);
   const path = pts.map(([x, y], i) => (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2)).join(' ');
-  const color = n >= 0 ? '#00876c' : '#c44360';
+  const color = n >= 0 ? '#c53342' : '#128061';
   return (
     '<svg class="spark" viewBox="0 0 111 40" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="g' +
     id +
@@ -225,28 +280,20 @@ function spark(values, n, id) {
     '" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>'
   );
 }
-const previewCache = new Map();
-function previewOf(st, id) {
-  if (!st) return initDemo(id);
-  if (st === s) return visible;
-  if (!previewCache.has(st.id) || previewCache.get(st.id).cursor !== st.cursor)
-    previewCache.set(st.id, {
-      cursor: st.cursor,
-      bars: getBars(st).slice(Math.max(0, st.cursor - 42), st.cursor + 1),
-    });
-  return previewCache.get(st.id).bars;
-}
 function renderMarkets() {
-  const ids = ['csi1000', 'csi500', 'ndx', 'spx'];
+  const ids = ['csi1000', 'csi500', 'ndx', 'csi300'];
   if (!ids.includes(s.marketId)) ids[3] = s.marketId;
   elements('watchlist').innerHTML = ids
     .map((id) => {
-      const selected = id === s.marketId && !s.customBars;
       const m = byId(id),
-        data = previewOf(selected ? s : latestMarket(id), id),
-        last = data.at(-1),
-        prev = data.at(-2) || last;
-      const change = (last.close / prev.close - 1) * 100;
+        item = watch.get(id),
+        quote = item?.quote,
+        selected = s.marketId === id;
+      const value = quote ? number(quote.price) : '—';
+      const change = quote?.previousClose ? (quote.price / quote.previousClose - 1) * 100 : null;
+      const small = quote
+        ? quote.tradeDate + (item.pinned ? ' · 收盘快照' : ' · 指数现货')
+        : '等待东方财富行情';
       return (
         '<button class="market-card ' +
         (selected ? 'selected' : '') +
@@ -258,27 +305,23 @@ function renderMarkets() {
         humanName(m.name) +
         '</span><span class="card-code">' +
         m.symbol +
-        '</span>' +
-        (selected ? '<span class="card-check">' + icon('check', 14) + '</span>' : '') +
-        '</span><span class="card-body"><span><span class="card-value">' +
-        number(last.close) +
+        '</span></span><span class="card-body"><span><span class="card-value">' +
+        value +
         '</span><span class="card-change ' +
-        tone(change) +
+        (change == null ? '' : tone(change)) +
         '">' +
-        signed(change) +
-        '%</span></span>' +
-        spark(
-          data.slice(-36).map((b) => b.close),
-          change,
-          id,
-        ) +
+        (change == null ? '—' : signed(change) + '%') +
+        '</span></span>' +
+        (item?.values?.length > 1 ? spark(item.values, change ?? 0, id) : '') +
+        '</span><span class="market-stamp">' +
+        esc(small) +
         '</span></button>'
       );
     })
     .join('');
 }
 function baseLabel() {
-  return s.base === '1D' ? '日线' : s.base === 'CSV' ? '原周期' : s.base === '15m' ? '15分' : '1小时';
+  return baseNames[baseIDs.indexOf(s.base)] || '原周期';
 }
 function writeOhlc(bar) {
   if (!bar) return;
@@ -298,8 +341,30 @@ function writeOhlc(bar) {
       )
       .join('');
 }
+function applyBoardQuote(session, quote) {
+  if (session.feed?.historySource !== '新浪财经') return applyLiveQuote(session, quote);
+  // Keep the secondary feed's OHLC intact. Only Eastmoney marks the account.
+  const history = session.customBars;
+  session.customBars = [];
+  try {
+    return applyLiveQuote(session, quote);
+  } finally {
+    session.customBars = history;
+  }
+}
+function sourceTimeForFill(time) {
+  const stamp = (x) => (typeof x === 'number' ? x : Date.parse(x) / 1000);
+  let lo = 0,
+    hi = visible.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (stamp(visible[mid].time) <= stamp(time)) lo = mid + 1;
+    else hi = mid;
+  }
+  return visible[Math.max(0, lo - 1)]?.time ?? time;
+}
 function renderChart() {
-  aggregated = aggregateBars(visible, s.period, market.timeZone);
+  aggregated = periodBars(visible, s.period, market);
   const a = s.account,
     p = a.position;
   const levels = [];
@@ -316,21 +381,22 @@ function renderChart() {
     if (o.type === 'stopLimit') levels.push({ price: o.limitPrice, title: '执行限价', color: '#526f89' });
   }
   const markers = a.fills.map((f) => ({
-    time: mapToPeriod(f.time, s.period, aggregated, market.timeZone),
+    time: executionTime(s.live ? sourceTimeForFill(f.time) : f.time, s.period, aggregated, market),
     side: f.side,
     price: f.price,
   }));
   chart.update(aggregated, {
     marketId: s.id,
-    timeframe: s.period === '1D' ? s.base : s.period,
+    timeframe: s.period === 'BASE' ? s.base : s.period,
     timeZone: market.timeZone,
-    type: s.type,
-    indicators: s.indicators,
+    type: 'candles',
+    indicators: [],
     markers,
     levels,
-    drawings: s.drawings[s.period] || [],
+    drawings: s.drawings[currentDrawingKey()] || [],
     precision: market.precision,
   });
+  elements('drawingCount').textContent = (s.drawings[currentDrawingKey()]?.length || 0) + ' 条';
   writeOhlc(aggregated.at(-1));
 }
 function table(head, rows) {
@@ -345,7 +411,7 @@ function table(head, rows) {
 function renderLedger() {
   const a = s.account,
     p = a.position,
-    price = bars[s.cursor].close,
+    price = markBar().close,
     snap = getSnapshot(a, price);
   const pending = a.orders.filter((o) => o.status === 'pending');
   elements('ledgerTabs').innerHTML = [
@@ -435,7 +501,7 @@ function qtyMaximum(fraction) {
     price =
       Number(elements(elements('orderType').value === 'stopLimit' ? 'limitPrice' : 'orderPrice').value) ||
       bars[s.cursor].close,
-    mark = bars[s.cursor].close;
+    mark = markBar().close;
   const ref = elements('orderType').value === 'market' ? mark : price;
   const direction = side === 'buy' ? 1 : -1,
     qty = a.position.qty;
@@ -444,7 +510,11 @@ function qtyMaximum(fraction) {
   const capacity = getSnapshot(a, ref).available;
   const opening =
     a.allowShort || side === 'buy'
-      ? Math.max(0, capacity) / (ref * (1 + (a.slippageBps * 3 + a.feeBps * 2) / 10000))
+      ? Math.max(0, capacity) /
+        (ref *
+          (a.contract?.multiplier || 1) *
+          ((a.contract?.marginRate || 1) + (a.slippageBps * 3 + a.feeBps * 2) / 10000) +
+          (a.contract?.tickSize || 0) * (a.contract?.multiplier || 1))
       : 0;
   return Math.floor((closeQty + opening) * fraction);
 }
@@ -452,16 +522,72 @@ function ticketEstimate() {
   const type = elements('orderType').value,
     price =
       type === 'market'
-        ? bars[s.cursor].close
+        ? markBar().close
         : Number(elements(type === 'stopLimit' ? 'limitPrice' : 'orderPrice').value);
   elements('notional').textContent =
-    number(Math.max(0, Number(elements('qty').value) || 0) * (price || 0)) + ' ' + market.currency;
+    number(
+      Math.max(0, Number(elements('qty').value) || 0) * (price || 0) * (s.account.contract?.multiplier || 1),
+    ) +
+    ' ' +
+    market.currency;
+  const terms = s.account.contract;
+  elements('marginEstimateRow').hidden = !terms;
+  if (terms)
+    elements('marginEstimate').textContent =
+      number((price || 0) * terms.multiplier * terms.marginRate) + ' ' + market.currency;
 }
 function renderTicket() {
-  const price = bars[s.cursor].close,
+  const price = markBar().close,
     snap = getSnapshot(s.account, price);
   elements('equity').textContent = number(snap.equity);
   elements('available').textContent = number(snap.available) + ' ' + market.currency;
+  for (const [id, val] of [
+    ['liveUnrealized', snap.unrealized],
+    ['liveRealized', snap.realized],
+    ['liveTotalPnl', snap.pnl],
+  ]) {
+    const out = elements(id),
+      n = Math.abs(val) < 0.005 ? 0 : val;
+    out.textContent = n ? signed(n) : '0.00';
+    out.className = n ? tone(n) : '';
+  }
+  const pos = s.account.position,
+    terms = s.account.contract;
+  elements('quickClose').disabled = !pos.qty;
+  elements('qtyUnit').textContent = unitName();
+  elements('positionSummary').textContent = pos.qty
+    ? (pos.qty > 0 ? '多头 ' : '空头 ') +
+      Math.abs(pos.qty) +
+      ' ' +
+      unitName() +
+      ' · 均价 ' +
+      number(pos.avgPrice)
+    : '当前空仓';
+  elements('contractInfo').hidden = !terms;
+  if (terms) {
+    const meta = s.feed?.contract || terms;
+    elements('contractInfo').innerHTML =
+      '<strong>' +
+      esc(terms.symbol) +
+      '</strong> · ' +
+      terms.multiplier +
+      ' 元/点 · 保证金 ' +
+      number(terms.marginRate * 100, 0) +
+      '%（约 ' +
+      number(1 / terms.marginRate) +
+      ' 倍）<br>已占保证金 ' +
+      number(snap.marginUsed) +
+      ' 元 · 持仓杠杆 ' +
+      number(snap.leverage) +
+      ' 倍' +
+      (meta.marginSourceUrl
+        ? ' · <a href="' +
+          esc(meta.marginSourceUrl) +
+          '" target="_blank" rel="noopener">参数 ' +
+          esc(meta.marginAsOf) +
+          '</a>'
+        : '');
+  }
   elements('currency').textContent = market.currency;
   elements('buy').classList.toggle('active', side === 'buy');
   elements('sell').classList.toggle('active', side === 'sell');
@@ -481,6 +607,34 @@ function renderTicket() {
 function renderPlay() {
   if (!s) return;
   const atEnd = s.cursor === bars.length - 1;
+  for (const node of [
+    elements('play'),
+    $('[data-action="step"]'),
+    elements('speed'),
+    elements('progressBlock'),
+  ])
+    node.hidden = !!s.live;
+  elements('feedMeta').hidden = !s.live && !s.feed?.anchored;
+  if (s.feed?.anchored)
+    elements('feedMeta').innerHTML =
+      '实际收盘 ' +
+      number(s.feed.anchorPrice) +
+      ' · <a href="' +
+      esc(s.feed.quoteUrl) +
+      '" target="_blank" rel="noopener">' +
+      esc(s.feed.tradeDate) +
+      ' 东方财富</a><br>其余走势为模拟生成';
+  elements('randomBtn').disabled = bars.length < 3 && !s.feed;
+  if (s.live)
+    elements('feedMeta').innerHTML =
+      (s.account.contract ? '公开行情或延时15分钟 · ' : '') +
+      (refreshIssue ? esc(refreshIssue) + ' · ' : '') +
+      (s.feed.quoteOnly ? '仅有当日行情 · ' : s.feed.historyCached ? '使用本机历史缓存 · ' : '') +
+      '报价 ' +
+      esc(fmtTime(s.liveQuote.time, market.timeZone)) +
+      ' · <a href="' +
+      esc(s.feed.quoteUrl) +
+      '" target="_blank" rel="noopener">东方财富</a>';
   elements('play').innerHTML = icon(timer ? 'pause' : 'play', 16);
   elements('play').setAttribute('aria-label', timer ? '暂停' : '播放');
   elements('play').disabled = atEnd;
@@ -489,42 +643,47 @@ function renderPlay() {
   const total = bars.length - s.start - 1,
     done = s.cursor - s.start;
   elements('progressNum').textContent = done + ' / ' + total;
-  elements('progress').value = (done / total) * 100;
+  elements('progress').value = total > 0 ? (done / total) * 100 : 100;
 }
 function render() {
   visible = bars.slice(0, s.cursor + 1);
   const b = visible.at(-1),
     prev = visible.at(-2) || b,
     delta = b.close - prev.close;
-  elements('modeBadge').textContent = s.customBars ? '已导入历史行情' : '模拟生成行情';
+  const quote = s.live ? s.liveQuote : null;
+  const reference = quote?.previousClose || prev.close;
+  const shownPrice = quote?.price || b.close,
+    difference = shownPrice - reference;
+  elements('modeBadge').textContent = s.feed
+    ? s.feed.anchored
+      ? '收盘价推演 · 模拟走势'
+      : s.live
+        ? '最新行情 · 模拟交易'
+        : '真实历史回放'
+    : s.customBars
+      ? 'CSV 历史回放'
+      : '模拟生成行情';
+  elements('todayBtn').textContent = loadBusy ? '正在取行情…' : s.live ? '刷新报价' : '今日行情';
+  elements('todayBtn').disabled = loadBusy;
   elements('instrumentName').textContent = humanName(market.name);
   elements('region').textContent = market.region;
   elements('instrumentCode').textContent =
-    market.exchange + ' · ' + market.symbol + '  /  ' + market.currency;
-  elements('quotePrice').textContent = number(b.close);
-  elements('quoteChange').textContent = signed(delta) + ' (' + signed((delta / prev.close) * 100) + '%)';
-  elements('quoteChange').className = tone(delta);
-  elements('periodButtons').innerHTML = [
-    ['1D', baseLabel()],
-    ['1W', '周线'],
-    ['1M', '月线'],
-  ]
-    .map(
-      ([p, label]) =>
-        '<button data-period="' +
-        p +
-        '" class="' +
-        (s.period === p ? 'active' : '') +
-        '">' +
-        label +
-        '</button>',
-    )
-    .join('');
-  elements('chartType').innerHTML =
-    icon(s.type === 'candles' ? 'candles' : 'line', 15) +
-    '<span>' +
-    (s.type === 'candles' ? '蜡烛' : '折线') +
-    '</span>';
+    market.exchange +
+    ' · ' +
+    market.symbol +
+    ' / ' +
+    market.currency +
+    (s.feed
+      ? ' · ' +
+        (s.feed.anchored
+          ? s.feed.tradeDate + ' 收盘基准'
+          : (s.live ? '报价 东方财富 · ' : '') + 'K线 ' + (s.feed.historySource || '东方财富'))
+      : '');
+  elements('quotePrice').textContent = number(shownPrice);
+  elements('quoteChange').textContent =
+    signed(difference) + ' (' + signed((difference / reference) * 100) + '%)';
+  elements('quoteChange').className = tone(difference);
+  renderPeriods();
   renderChart();
   renderMarkets();
   renderTicket();
@@ -537,14 +696,16 @@ function stop() {
   renderPlay();
 }
 function step() {
-  if (s.cursor >= bars.length - 1) {
+  if (s.live || s.cursor >= bars.length - 1) {
     stop();
     return;
   }
   const previous = s.account.fills.length;
-  const bar = bars[s.cursor + 1];
-  advanceBar(s.account, bar);
-  s.cursor++;
+  const until = nextDisplayCursor(bars, s.cursor, s.period, market);
+  while (s.cursor < until) {
+    advanceBar(s.account, bars[s.cursor + 1]);
+    s.cursor++;
+  }
   if (s.cursor === bars.length - 1) stop();
   render();
   save();
@@ -555,7 +716,7 @@ function play() {
     stop();
     return;
   }
-  if (s.cursor === bars.length - 1) return;
+  if (s.live || s.cursor === bars.length - 1) return;
   timer = setInterval(step, 1100 / Number(s.speed || 1));
   renderPlay();
 }
@@ -587,25 +748,13 @@ function setView(next) {
       session: s,
       market,
       bars: visible,
-      bar: bars[s.cursor],
+      bar: s.live ? { ...bars[s.cursor], close: markBar().close, time: markBar().time } : bars[s.cursor],
       onSave: async () => {
         if (!(await save())) throw Error('笔记尚未写入浏览器存储');
       },
       onRetry: () => {
-        const cfg = {
-          marketId: s.marketId,
-          base: s.base,
-          seed: s.seed,
-          startIndex: s.start,
-          customBars: s.customBars,
-          customName: s.customName,
-          initialCash: s.account.initialCash,
-          feeBps: s.account.feeBps,
-          slippageBps: s.account.slippageBps,
-          allowShort: s.account.allowShort,
-        };
-        activate(makeSession(cfg));
-        notify('已从相同起点开始新训练，原记录已存档');
+        restartAt(s.live ? Math.max(0, bars.length - 61) : s.start);
+        notify('已从相同数据重新开始，原训练已存档');
       },
       onBack: () => setView('terminal'),
       onRestore: (id) => {
@@ -616,6 +765,426 @@ function setView(next) {
   }
 }
 const dialog = elements('dialog');
+function sessionConfig() {
+  const a = s.account;
+  return {
+    marketId: s.marketId,
+    base: s.base,
+    seed: s.seed,
+    customBars: s.customBars,
+    customName: s.customName,
+    feed: s.feed,
+    period: s.period,
+    scenarioId: s.scenarioId || s.id,
+    initialCash: a.initialCash,
+    contract: a.contract,
+    feeBps: a.feeBps,
+    slippageBps: a.slippageBps,
+    allowShort: a.allowShort,
+  };
+}
+function restartAt(startIndex) {
+  const cfg = sessionConfig();
+  // Replay keeps an immutable copy of the series at the instant of the jump.
+  if (cfg.customBars) cfg.customBars = structuredClone(cfg.customBars);
+  const next = makeSession({ ...cfg, startIndex });
+  next.speed = s.speed;
+  return activate(next);
+}
+function randomPeriod() {
+  if (bars.length < 30 && s.feed && !s.feed.anchored) {
+    const cfg = {
+      marketId: s.marketId,
+      kind: s.feed.kind,
+      base: '5m',
+      live: false,
+      initialCash: s.account.initialCash,
+      feeBps: s.account.feeBps,
+      slippageBps: s.account.slippageBps,
+      allowShort: s.account.allowShort,
+    };
+    startFeed(cfg).catch(() => {
+      openAnchor(cfg);
+      randomPeriod();
+      notify('历史连接暂不可用，已跳到收盘价推演的随机时段；原持仓已存档。');
+    });
+    return;
+  }
+  if (bars.length < 3) {
+    notify('当前行情长度不足以切换时段');
+    return;
+  }
+  const group = s.scenarioId || s.id;
+  const blocked = [...sessions.values()].filter((x) => (x.scenarioId || x.id) === group).map((x) => x.start);
+  const start = pickRandomStart({
+    length: bars.length,
+    currentIndex: s.cursor,
+    previousStart: s.start,
+    blockedStarts: blocked,
+  });
+  restartAt(start);
+  notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone) + '，原训练已存档');
+}
+const preferred = ['5m', '15m', '30m', '1H', '1D'];
+function effectivePeriod(p) {
+  return p === 'BASE' ? s.base : p;
+}
+function renderPeriods() {
+  const options = s.live
+    ? baseIDs.map((id, i) => ({ id: id === s.base ? 'BASE' : id, label: baseNames[i] }))
+    : frameChoices;
+  const pin = options.filter((o) => preferred.includes(effectivePeriod(o.id)) || o.id === s.period);
+  if (!pin.some((o) => o.id === 'BASE') && !s.live) pin.unshift(options[0]);
+  const select =
+    '<select id="allPeriods" aria-label="所有K线周期"><option value="">更多周期</option>' +
+    options.map((o) => '<option value="' + o.id + '">' + o.label + '</option>').join('') +
+    '</select>';
+  elements('periodButtons').innerHTML =
+    pin
+      .map(
+        (o) =>
+          '<button data-period="' +
+          o.id +
+          '" class="' +
+          (s.period === o.id ? 'active' : '') +
+          '" aria-pressed="' +
+          (s.period === o.id) +
+          '">' +
+          o.label +
+          '</button>',
+      )
+      .join('') + select;
+}
+function currentDrawingKey(period = s.period) {
+  return s.live ? 'live:' + effectivePeriod(period) : period;
+}
+async function choosePeriod(period) {
+  const instance = s;
+  try {
+    // For the live board ask for native historical depth at the requested resolution.
+    // A replay always stays on the same instrument, dataset, and cursor.
+    if (s.live) {
+      const desired = effectivePeriod(period);
+      let source =
+        { '3m': '1m', '10m': '5m', '2H': '1H', '4H': '1H', '1W': '1D', '1M': '1D', '1Q': '1D', '1Y': '1D' }[
+          desired
+        ] || desired;
+      if (['5m', '10m', '15m', '30m', '1H', '2H', '4H'].includes(desired) && s.base === '5m') source = '5m';
+      if (source !== s.base) {
+        const version = ++loadVersion;
+        const feed = await loadChartFeed(s.marketId, source, {
+          contract: s.feed.kind === 'future' ? s.feed.symbol : 'index',
+          limit: 720,
+        });
+        if (version !== loadVersion || s !== instance || !s.live) return;
+        rememberHistory(s.marketId, source, feed);
+        const oldStartTime = bars[s.start]?.time;
+        s.base = source;
+        s.customBars = feed.bars;
+        s.feed.quoteOnly = false;
+        s.feed.historySource = feed.historySource || '东方财富';
+        const latest = s.liveQuote.time > feed.quote.time ? s.liveQuote : feed.quote;
+        applyBoardQuote(s, latest);
+        bars = s.customBars;
+        s.cursor = bars.length - 1;
+        // Account history stays intact even when the displayed base changes.
+        s.start = Math.min(
+          s.cursor,
+          Math.max(
+            0,
+            bars.findIndex((b) => b.time === oldStartTime),
+          ),
+        );
+        frameChoices = timeframeOptions(source, bars, market.region);
+      } else {
+        loadVersion++;
+      }
+      s.period = desired === s.base ? 'BASE' : desired;
+    } else {
+      if (!frameChoices.some((x) => x.id === period)) return;
+      s.period = period;
+    }
+    chart.setTool('crosshair');
+    render();
+    save();
+  } catch (err) {
+    if (s === instance) notify(err.message);
+  }
+}
+function openAnchor({
+  marketId = 'csi1000',
+  kind = 'future',
+  base = '5m',
+  initialCash,
+  feeBps,
+  slippageBps,
+  allowShort,
+}) {
+  const desired = base;
+  base = '1m';
+  const data = anchoredScenario(marketId, { base, kind: kind === 'future' ? 'future' : 'index', deep: true });
+  const feed = {
+    kind,
+    anchored: true,
+    anchorPrice: data.quote.price,
+    symbol: data.symbol,
+    name: data.name,
+    quoteUrl: data.quoteUrl,
+    tradeDate: data.quote.tradeDate,
+    contract: data.contract,
+  };
+  const config = {
+    marketId,
+    base,
+    period: desired === base ? 'BASE' : desired,
+    feed,
+    customBars: data.bars,
+    startIndex: data.startIndex,
+    contract: data.contract,
+    initialCash: initialCash ?? (data.contract ? 1000000 : 100000),
+    feeBps,
+    slippageBps,
+    allowShort,
+  };
+  return activate(makeSession(config));
+}
+const historyStore = 'wavelab-public-candle-cache';
+let candleCache = [];
+try {
+  candleCache = JSON.parse(localStorage.getItem(historyStore) || '[]');
+  if (!Array.isArray(candleCache)) candleCache = [];
+} catch {}
+function rememberHistory(marketId, base, d) {
+  if (!d?.bars?.length || d.bars.length < 4) return;
+  const key = [marketId, d.symbol, base].join('/');
+  const old = candleCache.find((x) => x.key === key);
+  if (
+    old &&
+    old.last === d.bars.at(-1).time &&
+    old.close === d.bars.at(-1).close &&
+    old.bars.length >= d.bars.length
+  )
+    return;
+  candleCache = [
+    {
+      key,
+      last: d.bars.at(-1).time,
+      close: d.bars.at(-1).close,
+      bars: d.bars.slice(-720),
+      historySource: d.historySource || '东方财富',
+    },
+    ...candleCache.filter((x) => x.key !== key),
+  ].slice(0, 14);
+  try {
+    localStorage.setItem(historyStore, JSON.stringify(candleCache));
+  } catch {}
+}
+function cachedBars(marketId, base, symbol) {
+  const key = [marketId, symbol, base].join('/');
+  const cached = candleCache.find((x) => x.key === key);
+  if (cached) return cached;
+  const old = [...sessions.values()].find(
+    (x) =>
+      x.marketId === marketId &&
+      x.feed?.symbol === symbol &&
+      !x.feed.anchored &&
+      !x.feed.quoteOnly &&
+      x.base === base &&
+      x.customBars?.length > 3,
+  );
+  return old ? { bars: old.customBars, historySource: old.feed.historySource || '东方财富' } : null;
+}
+async function startFeed({
+  marketId,
+  base = '5m',
+  kind = 'future',
+  live = true,
+  initialCash,
+  feeBps = 3,
+  slippageBps = 2,
+  allowShort = true,
+}) {
+  const version = ++loadVersion;
+  loadBusy = true;
+  elements('todayBtn').textContent = '正在取行情…';
+  elements('todayBtn').disabled = true;
+  stop();
+  try {
+    const request = { contract: kind === 'future' ? 'active' : 'index', limit: 720 };
+    let dataset,
+      quoteOnly = false,
+      desiredBase = base;
+    try {
+      dataset = await loadChartFeed(marketId, base, request);
+      rememberHistory(marketId, base, dataset);
+      if (dataset.bars.length < (live ? 3 : 30)) throw Error('此周期可用行情不足，请选择其他周期。');
+    } catch (err) {
+      const q = await fetchEastmoneyQuote(marketId, request);
+      const cached = cachedBars(marketId, base, q.symbol);
+      if (cached) {
+        dataset = {
+          quote: q,
+          name: q.name,
+          symbol: q.symbol,
+          tradeDate: q.tradeDate,
+          quoteUrl: q.quoteUrl,
+          contract: q.contract,
+          bars: structuredClone(cached.bars),
+          historySource: cached.historySource,
+          historyCached: true,
+        };
+      } else {
+        if (!live) throw err;
+        if (![q.open, q.high, q.low].every((v) => Number.isFinite(v) && v > 0)) throw err;
+        quoteOnly = true;
+        base = '1D';
+        dataset = {
+          quote: q,
+          name: q.name,
+          symbol: q.symbol,
+          tradeDate: q.tradeDate,
+          quoteUrl: q.quoteUrl,
+          contract: q.contract,
+          bars: [
+            {
+              time: q.tradeDate,
+              open: q.open,
+              high: Math.max(q.high, q.open, q.price),
+              low: Math.min(q.low, q.open, q.price),
+              close: q.price,
+              volume: q.volume || 0,
+            },
+          ],
+        };
+      }
+    }
+    if (version !== loadVersion) return;
+    const contract = dataset.contract
+      ? { ...dataset.contract, maintenanceRate: dataset.contract.exchangeMarginRate }
+      : undefined;
+    const feed = {
+      kind,
+      quoteOnly,
+      desiredBase,
+      historySource: dataset.historySource || '东方财富',
+      historyCached: !!dataset.historyCached,
+      symbol: dataset.symbol,
+      name: dataset.name,
+      quoteUrl: dataset.quoteUrl,
+      tradeDate: dataset.tradeDate,
+      contract,
+    };
+    const startIndex = live ? dataset.bars.length - 1 : pickRandomStart({ length: dataset.bars.length });
+    const next = makeSession({
+      marketId,
+      base,
+      customBars: dataset.bars,
+      feed,
+      live,
+      quote: dataset.quote,
+      contract,
+      startIndex,
+      initialCash: initialCash ?? (contract ? 1000000 : 100000),
+      feeBps,
+      slippageBps,
+      allowShort,
+    });
+    await activate(next);
+  } finally {
+    if (version === loadVersion || !loadBusy) {
+      loadBusy = false;
+      elements('todayBtn').disabled = false;
+      elements('todayBtn').textContent = s?.live ? '刷新报价' : '今日行情';
+    }
+  }
+}
+async function refreshLive(manual = false) {
+  if (!s?.live || quoteBusy) return;
+  const instance = s,
+    sourceBase = s.base;
+  quoteBusy = true;
+  try {
+    const options = { contract: s.feed.kind === 'future' ? s.feed.symbol : 'index' };
+    // Refresh actual candles after a suspended tab or a trading-day change.
+
+    const full = manual || !s.lastHistoryFetch || Date.now() - s.lastHistoryFetch > 90000;
+    let data = null;
+    const requestBase = s.feed.quoteOnly ? s.feed.desiredBase : sourceBase;
+    if (full) {
+      try {
+        data = await loadChartFeed(s.marketId, requestBase, { ...options, limit: 720 });
+      } catch {}
+    }
+
+    const q = data?.quote || (await fetchEastmoneyQuote(s.marketId, options));
+    if (s !== instance || s.base !== sourceBase) return;
+    const result = applyBoardQuote(s, q);
+    if (result.changed && s.markHistory && s.markHistory.at(-1)?.time !== s.account.lastTime)
+      s.markHistory.push({ time: s.account.lastTime, price: s.account.lastPrice });
+    if (data && q.time >= s.liveQuote.time) {
+      s.customBars = data.bars;
+      s.lastHistoryFetch = Date.now();
+      rememberHistory(s.marketId, requestBase, data);
+      s.feed.historyCached = false;
+      s.feed.historySource = data.historySource || '东方财富';
+      if (s.feed.quoteOnly && data.bars.length > 1) {
+        s.base = requestBase;
+        s.period = 'BASE';
+        s.feed.quoteOnly = false;
+        frameChoices = timeframeOptions(s.base, s.customBars, market.region);
+      }
+    } else if (full) {
+      s.lastHistoryFetch = Date.now();
+    }
+    bars = s.customBars;
+    s.cursor = bars.length - 1;
+    s.feed.tradeDate = s.liveQuote.tradeDate;
+    refreshIssue = '';
+    if (view === 'terminal') render();
+    else if (result.changed) setView('journal');
+    if (result.changed || data) save();
+    if (manual) notify('已核对东方财富报价 · ' + fmtTime(s.liveQuote.time, market.timeZone));
+  } catch (err) {
+    if (s === instance) {
+      refreshIssue = '报价更新失败，保留上次报价';
+      if (view === 'terminal') renderPlay();
+      if (manual) notify(err.message);
+    }
+  } finally {
+    quoteBusy = false;
+  }
+}
+let lastWatch = 0;
+async function refreshWatch() {
+  if (Date.now() - lastWatch < 60000) return;
+  lastWatch = Date.now();
+  const wanted = MARKETS.filter((m) => ['csi1000', 'csi500', 'ndx', 'csi300', s?.marketId].includes(m.id));
+  for (const m of wanted) {
+    try {
+      const old = watch.get(m.id);
+      if (old?.values?.length) {
+        const quote = await fetchEastmoneyQuote(m.id, { contract: 'index' });
+        watch.set(m.id, { quote, values: [...old.values.slice(0, -1), quote.price] });
+      } else {
+        const d = await fetchEastmoneyBars(m.id, '1D', { contract: 'index', limit: 38 });
+        watch.set(m.id, { quote: d.quote, values: d.bars.map((b) => b.close) });
+      }
+      if (s && view === 'terminal') renderMarkets();
+    } catch {}
+  }
+  try {
+    localStorage.setItem('wavelab-index-watch', JSON.stringify([...watch]));
+  } catch {}
+}
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'allPeriods' && e.target.value) choosePeriod(e.target.value);
+});
+setInterval(() => {
+  if (!document.hidden && s) {
+    refreshLive();
+    refreshWatch();
+  }
+}, 15000);
 function show(title, html) {
   stop();
   elements('dialogTitle').textContent = title;
@@ -630,11 +1199,7 @@ function context() {
     markets: MARKETS,
     onNew: (config) => activate(makeSession(config)),
     onSwitch: switchMarket,
-    onIndicators: (values) => {
-      s.indicators = values;
-      renderChart();
-      save();
-    },
+    onFeed: startFeed,
     onJournal: () => setView('journal'),
   };
 }
@@ -649,13 +1214,13 @@ function submit() {
     if (elements('tp').value) order.takeProfit = Number(elements('tp').value);
     if (elements('sl').value) order.stopLoss = Number(elements('sl').value);
   }
-  const result = placeOrder(s.account, order, bars[s.cursor]);
+  const result = placeOrder(s.account, order, markBar());
   tab = type === 'market' ? 'position' : 'orders';
   render();
   save();
   notify(
     result.status === 'filled'
-      ? '已模拟成交 ' + result.filledQty + ' 单位，成交价 ' + number(result.fillPrice)
+      ? '已模拟成交 ' + result.filledQty + ' ' + unitName() + '，成交价 ' + number(result.fillPrice)
       : '委托已提交，下一根 K 线起撮合',
   );
 }
@@ -675,7 +1240,7 @@ function editProtection() {
       updateProtection(
         s.account,
         { takeProfit: elements('editTp').value || null, stopLoss: elements('editSl').value || null },
-        bars[s.cursor],
+        markBar(),
       );
       dialog.close();
       render();
@@ -704,20 +1269,34 @@ function action(key) {
     case 'markets':
       openMarkets(dial, context());
       break;
-    case 'indicators':
-      openIndicators(dial, context());
+    case 'random':
+      randomPeriod();
       break;
+    case 'today':
+      if (s.live) refreshLive(true);
+      else
+        startFeed({
+          marketId: s.marketId,
+          kind: s.feed?.kind || (domestic(s.marketId) ? 'future' : 'spot'),
+          base: '5m',
+          live: true,
+        }).catch((err) => notify(err.message));
+      break;
+    case 'undoDraw': {
+      const items = s.drawings[currentDrawingKey()] || [];
+      if (items.length) {
+        s.drawings[currentDrawingKey()] = items.slice(0, -1);
+        renderChart();
+        save();
+      }
+      break;
+    }
     case 'dismiss':
       dialog.close();
       break;
     case 'terminal':
     case 'journal':
       setView(key);
-      break;
-    case 'type':
-      s.type = s.type === 'candles' ? 'line' : 'candles';
-      render();
-      save();
       break;
     case 'fit':
       chart.resetView();
@@ -741,10 +1320,10 @@ function action(key) {
       submit();
       break;
     case 'closePosition':
-      closePosition(s.account, bars[s.cursor]);
+      const result = closePosition(s.account, markBar());
       render();
       save();
-      notify('已平仓');
+      notify('已全部平仓 ' + result.filledQty + ' ' + unitName() + '，成交价 ' + number(result.fillPrice));
       break;
     case 'protect':
       editProtection();
@@ -764,10 +1343,7 @@ document.addEventListener('click', (event) => {
     if (d.action) action(d.action);
     else if (d.market) switchMarket(d.market);
     else if (d.period) {
-      s.period = d.period;
-      chart.setTool('crosshair');
-      render();
-      save();
+      choosePeriod(d.period);
     } else if (d.tool) {
       chart.setTool(d.tool);
       if (d.tool !== 'crosshair')
@@ -792,8 +1368,8 @@ document.addEventListener('click', (event) => {
   }
 });
 elements('orderType').addEventListener('change', () => {
-  elements('orderPrice').value = bars[s.cursor].close;
-  elements('limitPrice').value = bars[s.cursor].close;
+  elements('orderPrice').value = markBar().close;
+  elements('limitPrice').value = markBar().close;
   renderTicket();
 });
 for (const name of ['qty', 'orderPrice', 'limitPrice'])
@@ -838,13 +1414,18 @@ dialog.addEventListener('click', (e) => {
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stop();
+  else if (s) {
+    refreshLive();
+    refreshWatch();
+  }
 });
 function initChart() {
   chart = createTradingChart(elements('plot'), {
     onHover: (b) => writeOhlc(b || aggregated.at(-1)),
     onDrawingChange: (drawings) => {
       if (s) {
-        s.drawings[s.period] = drawings;
+        s.drawings[currentDrawingKey()] = drawings;
+        elements('drawingCount').textContent = drawings.length + ' 条';
         save();
       }
     },
@@ -863,7 +1444,39 @@ try {
   } catch {
     store = null;
   }
-  await activate(applyRecovery(active) || makeSession({ seed: defaultSeed }));
+  try {
+    for (const [id, item] of JSON.parse(localStorage.getItem('wavelab-index-watch') || '[]'))
+      if (byId(id) && item?.quote?.price) watch.set(id, item);
+  } catch {}
+  const restored = applyRecovery(active);
+  const emptyLegacy =
+    restored &&
+    !restored.feed &&
+    !restored.customBars &&
+    !restored.account.orders.length &&
+    !restored.notes?.length &&
+    !Object.values(restored.drawings || {}).some((x) => x.length) &&
+    restored.cursor === restored.start &&
+    !restored.periodSchema;
+  if (restored && !emptyLegacy) {
+    await activate(restored);
+    if (s.live) refreshLive();
+  } else {
+    elements('modeBadge').textContent = '正在读取东方财富';
+    try {
+      await startFeed({
+        marketId: restored?.marketId || 'csi1000',
+        kind: domestic(restored?.marketId || 'csi1000') ? 'future' : 'spot',
+        base: '5m',
+        live: true,
+      });
+    } catch (err) {
+      const id = restored?.marketId || 'csi1000';
+      await openAnchor({ marketId: id, kind: domestic(id) ? 'future' : 'spot' });
+      notify('东方财富直连暂不可用，已从标注日期的收盘价开始模拟推演。');
+    }
+  }
+  refreshWatch();
   if (location.hash === '#journal') setView('journal');
 } catch (err) {
   elements('saved').textContent = '加载失败';

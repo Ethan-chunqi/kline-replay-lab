@@ -1,4 +1,4 @@
-// A single-instrument, fully collateralized paper account. All state is JSON-safe.
+// One instrument per training account. Margin trading requires an explicit futures contract.
 const EPSILON = 1e-9;
 const emptyPosition = () => ({ qty: 0, avgPrice: 0, entryFees: 0, takeProfit: null, stopLoss: null });
 const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
@@ -32,7 +32,30 @@ function validateBar(bar) {
     throw new Error('行情价格无效');
 }
 
-export function createAccount({ initialCash = 100000, feeBps = 3, slippageBps = 2, allowShort = true } = {}) {
+function contractTerms(contract) {
+  const multiplier = positive(contract.multiplier, '合约乘数');
+  const marginRate = positive(contract.marginRate, '开仓保证金率');
+  if (marginRate > 1) throw new Error('开仓保证金率须在 0 至 1 之间');
+  const maintenanceRate = positive(contract.maintenanceRate ?? marginRate * 0.75, '维持保证金率');
+  if (maintenanceRate >= marginRate) throw new Error('维持保证金率须低于开仓保证金率');
+  const tickSize = positive(contract.tickSize ?? 0.2, '最小价格变动');
+  return {
+    ...contract,
+    symbol: String(contract.symbol ?? ''),
+    multiplier,
+    marginRate,
+    maintenanceRate,
+    tickSize,
+  };
+}
+
+export function createAccount({
+  initialCash = 100000,
+  feeBps = 3,
+  slippageBps = 2,
+  allowShort = true,
+  contract = null,
+} = {}) {
   const capital = positive(initialCash, '初始资金');
   return {
     initialCash: capital,
@@ -40,6 +63,7 @@ export function createAccount({ initialCash = 100000, feeBps = 3, slippageBps = 
     feeBps: basisPoints(feeBps),
     slippageBps: basisPoints(slippageBps),
     allowShort: Boolean(allowShort),
+    ...(contract == null ? {} : { contract: contractTerms(contract) }),
     position: emptyPosition(),
     orders: [],
     fills: [],
@@ -58,29 +82,45 @@ export function createAccount({ initialCash = 100000, feeBps = 3, slippageBps = 
 }
 
 function marked(account, price) {
-  const positionValue = account.position.qty * price;
-  const equity = account.cash + positionValue;
-  // Short proceeds and a matching cash collateral are locked while a short is open.
-  const available = Math.max(0, account.cash + 2 * Math.min(0, positionValue));
-  return { positionValue, equity, available };
+  const { position, contract } = account;
+  const units = position.qty * (contract?.multiplier ?? 1);
+  const positionValue = units * price;
+  const notional = Math.abs(positionValue);
+  const floatingPnl = units * (price - position.avgPrice);
+  // Futures exchange only fees and realized P&L in cash. The index model exchanges the full consideration.
+  const equity = account.cash + (contract ? floatingPnl : positionValue);
+  const marginUsed = notional * (contract?.marginRate ?? 1);
+  const maintenanceMargin = notional * (contract?.maintenanceRate ?? (position.qty < 0 ? 0.5 : 0));
+  const freeMargin = equity - marginUsed;
+  const available = Math.max(0, freeMargin);
+  const leverage = equity > 0 ? notional / equity : 0;
+  return {
+    positionValue,
+    notional,
+    floatingPnl,
+    equity,
+    marginUsed,
+    maintenanceMargin,
+    freeMargin,
+    available,
+    leverage,
+  };
 }
 
 export function getSnapshot(account, barOrPrice = account.lastPrice) {
   const price = Number(typeof barOrPrice === 'object' && barOrPrice !== null ? barOrPrice.close : barOrPrice);
   if (!Number.isFinite(price) || price < 0 || (!price && account.position.qty))
     throw new Error('估值价格无效');
-  const { positionValue, equity, available } = marked(account, price);
-  const pnl = equity - account.initialCash;
+  const valuation = marked(account, price);
+  const pnl = valuation.equity - account.initialCash;
   return {
-    equity,
+    ...valuation,
     cash: account.cash,
-    available,
-    positionValue,
-    unrealized: (price - account.position.avgPrice) * account.position.qty - account.position.entryFees,
+    unrealized: valuation.floatingPnl - account.position.entryFees,
     realized: account.realized,
     pnl,
     returnPct: (pnl / account.initialCash) * 100,
-    drawdownPct: Math.max(0, (1 - equity / account.peakEquity) * 100),
+    drawdownPct: Math.max(0, (1 - valuation.equity / account.peakEquity) * 100),
     maxDrawdownPct: account.maxDrawdownPct,
     trades: account.trades,
     winRate: account.trades ? (account.wins / account.trades) * 100 : 0,
@@ -118,9 +158,35 @@ function checkProtection(fields, side, price) {
     throw new Error(side === 'buy' ? '多头止盈价应高于参考价' : '空头止盈价应低于参考价');
 }
 
+function tickCount(price, tick) {
+  const count = price / tick;
+  const nearest = Math.round(count);
+  return Math.abs(count - nearest) <= Math.max(1e-9, Math.abs(count) * Number.EPSILON * 8) ? nearest : count;
+}
+
+function validateTicks(account, fields) {
+  if (!account.contract) return;
+  const tick = account.contract.tickSize ?? 0.2;
+  for (const [key, label] of [
+    ['price', '委托价'],
+    ['limitPrice', '限价'],
+    ['stopLoss', '止损价'],
+    ['takeProfit', '止盈价'],
+  ]) {
+    if (fields[key] != null && !Number.isInteger(tickCount(fields[key], tick)))
+      throw new Error(label + '须为最小价格变动 ' + tick + ' 点的整数倍');
+  }
+}
+
 function executionPrice(account, order, marketPrice) {
   const sign = order.side === 'buy' ? 1 : -1;
-  const slipped = marketPrice * (1 + (sign * account.slippageBps) / 10000);
+  let slipped = marketPrice * (1 + (sign * account.slippageBps) / 10000);
+  if (account.contract) {
+    const tick = account.contract.tickSize ?? 0.2;
+    const ticks = tickCount(slipped, tick);
+    const rounded = order.side === 'buy' ? Math.ceil(ticks) : Math.floor(ticks);
+    slipped = Number((Math.max(1, rounded) * tick).toPrecision(15));
+  }
   const limit = order.type === 'stopLimit' ? order.limitPrice : order.type === 'limit' ? order.price : null;
   if (limit === null) return slipped;
   return order.side === 'buy' ? Math.min(slipped, limit) : Math.max(slipped, limit);
@@ -135,26 +201,37 @@ function quote(account, order, price, mark = price) {
   const openedQty = qty - closedQty;
   const remainder = oldQty + sign * qty;
   const nextQty = Math.abs(remainder) <= Number.EPSILON * Math.max(Math.abs(oldQty), qty) * 4 ? 0 : remainder;
-  const notional = qty * price;
+  const multiplier = account.contract?.multiplier ?? 1;
+  const notional = qty * price * multiplier;
   const fee = (notional * account.feeBps) / 10000;
-  const nextCash = account.cash - sign * notional - fee;
+  const closedGrossPnl = closedQty * Math.sign(oldQty) * (price - account.position.avgPrice) * multiplier;
+  const nextCash = account.cash + (account.contract ? closedGrossPnl : -sign * notional) - fee;
   if (![nextQty, nextCash, notional, fee].every(Number.isFinite)) throw new Error('委托金额超过有效范围');
   if (nextQty !== 0 && nextCash < -EPSILON) throw new Error('可用资金不足，请调整数量');
   if (nextQty < 0 && openedQty > 0 && !account.allowShort) throw new Error('已关闭做空，可卖数量不足');
-  if (openedQty > 0) {
+  if (openedQty > 0 && account.contract) {
+    const projectedEquity = marked(account, mark).equity + sign * qty * multiplier * (mark - price) - fee;
+    const required = Math.abs(nextQty) * multiplier * mark * account.contract.marginRate;
+    if (projectedEquity + EPSILON < required) throw new Error('可用保证金不足，请减少手数');
+  } else if (openedQty > 0) {
     const locked = nextQty < 0 ? -2 * nextQty * Math.max(mark, price) : 0;
     if (nextCash + EPSILON < locked) throw new Error('可用资金不足，请减少数量');
   }
-  return { qty, closedQty, openedQty, nextQty, fee, nextCash };
+  return { qty, closedQty, openedQty, nextQty, fee, nextCash, closedGrossPnl };
 }
 
 function execute(account, order, marketPrice, time) {
   const price = executionPrice(account, order, marketPrice);
-  const { qty, closedQty, openedQty, nextQty, fee, nextCash } = quote(account, order, price, marketPrice);
+  const { qty, closedQty, openedQty, nextQty, fee, nextCash, closedGrossPnl } = quote(
+    account,
+    order,
+    price,
+    marketPrice,
+  );
   const old = account.position;
   const entryFeesClosed = closedQty ? old.entryFees * (closedQty / Math.abs(old.qty)) : 0;
   const exitFee = fee * (closedQty / qty);
-  let realizedPnl = closedQty * Math.sign(old.qty) * (price - old.avgPrice) - entryFeesClosed - exitFee;
+  let realizedPnl = closedGrossPnl - entryFeesClosed - exitFee;
   // An extreme overnight gap can exceed all collateral. A liquidated training account stops at zero.
   const gapCredit = nextQty === 0 && nextCash < -EPSILON ? -nextCash : 0;
   realizedPnl += gapCredit;
@@ -240,7 +317,15 @@ function nextEvent(account, start, end) {
   const position = account.position;
   if (position.qty) {
     const sign = Math.sign(position.qty);
-    if (sign < 0) consider(1, account.cash / (1.5 * -position.qty), { reason: 'marginCall' });
+    if (account.contract) {
+      // Solve cash + units * (mark - entry) = abs(units) * mark * maintenanceRate.
+      const units = position.qty * account.contract.multiplier;
+      const callPrice =
+        (position.avgPrice - account.cash / units) / (1 - sign * account.contract.maintenanceRate);
+      consider(-sign, callPrice, { reason: 'marginCall' });
+    } else if (sign < 0) {
+      consider(1, account.cash / (1.5 * -position.qty), { reason: 'marginCall' });
+    }
     consider(-sign, position.stopLoss, { reason: 'stopLoss' });
     consider(sign, position.takeProfit, { reason: 'takeProfit' });
   }
@@ -322,6 +407,7 @@ export function placeOrder(account, input, bar) {
   if (!['buy', 'sell'].includes(side) || !['market', 'limit', 'stop', 'stopLimit'].includes(type))
     throw new Error('委托方向或类型无效');
   const qty = positive(input.qty, '委托数量');
+  if (account.contract && !Number.isSafeInteger(qty)) throw new Error('期货委托手数须为正整数');
   const price = type === 'market' ? null : positive(input.price, '触发价格');
   const fields = {
     side,
@@ -340,6 +426,7 @@ export function placeOrder(account, input, bar) {
       activationPrice: null,
     });
   }
+  validateTicks(account, fields);
   const reference = fields.limitPrice ?? price ?? bar.close;
   const terms = quote(account, fields, executionPrice(account, fields, reference), reference);
   if (terms.openedQty) checkProtection(fields, side, reference);
@@ -375,6 +462,7 @@ export function updateProtection(account, input, bar) {
   const position = account.position;
   if (!position.qty) throw new Error('当前没有可设置止盈止损的持仓');
   const fields = protectionFields(input);
+  validateTicks(account, fields);
   checkProtection(fields, position.qty > 0 ? 'buy' : 'sell', bar.close);
   Object.assign(position, fields);
   return position;

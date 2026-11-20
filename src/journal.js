@@ -124,6 +124,16 @@ function metric(label, value, footer, color) {
 }
 
 function benchmarkFor(session, bars, mark, strategyReturn) {
+  if (session.live && Number.isFinite(session.entryMark) && Number.isFinite(mark?.close)) {
+    const returnPct = (mark.close / session.entryMark - 1) * 100;
+    const values = new Map(
+      (session.markHistory || []).map((observation) => [
+        observation.time,
+        (session.account.initialCash * observation.price) / session.entryMark,
+      ]),
+    );
+    return { returnPct, excess: strategyReturn - returnPct, values };
+  }
   const start = session.start;
   if (!Number.isInteger(start) || start < 0 || !bars[start]) return null;
   const end = mark ? bars.findIndex((b) => b.time === mark.time) : bars.length - 1;

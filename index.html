@@ -32,6 +32,7 @@
         <div class="title-row">
           <h1>训练终端</h1>
           <div class="mode-badge" id="modeBadge"></div>
+          <button data-action="today" id="todayBtn" class="today-btn">今日行情</button>
         </div>
       </div>
       <section aria-label="市场选择">
@@ -58,16 +59,17 @@
           </div>
           <div class="chart-toolbar">
             <div class="period-buttons" id="periodButtons"></div>
-            <span class="divider"></span><button class="tool" data-action="type" id="chartType"></button
-            ><button class="tool" data-action="indicators"><i data-i="indicator"></i><span>指标</span></button
-            ><span class="flex"></span
+            <span class="divider"></span><span class="flex"></span
             ><button class="tool icon-only" data-action="fit" title="回到最新" aria-label="回到最新">
               <i data-i="fit"></i></button
             ><button class="tool icon-only" data-action="expand" title="展开图表" aria-label="展开图表">
               <i data-i="expand"></i>
             </button>
           </div>
-          <div class="ohlc" id="ohlc"></div>
+          <div class="chart-readings">
+            <div class="ohlc" id="ohlc"></div>
+            <span class="chart-convention">红涨 · 绿跌</span>
+          </div>
           <div class="plot-body">
             <div class="draw-tools">
               <button
@@ -93,8 +95,21 @@
             </div>
             <div id="plot"></div>
           </div>
+          <div class="pencil-row">
+            <span>画线</span><button data-tool="trend"><i data-i="trend"></i>趋势线</button
+            ><button data-tool="horizontal"><i data-i="hline"></i>水平线</button
+            ><button data-action="undoDraw">撤销上一条</button><small id="drawingCount"></small>
+          </div>
           <div class="replay">
             <div class="play-group">
+              <button
+                data-action="random"
+                id="randomBtn"
+                class="random-btn"
+                title="存档当前训练，从另一段行情空仓开练"
+              >
+                <i data-i="shuffle"></i>随机时段
+              </button>
               <button
                 class="play-btn"
                 data-action="play"
@@ -112,7 +127,8 @@
                 <option value="8">8×</option>
               </select>
             </div>
-            <div class="progress-block">
+            <div id="feedMeta" class="feed-meta" hidden></div>
+            <div class="progress-block" id="progressBlock">
               <div><span id="replayText"></span><span id="progressNum"></span></div>
               <progress id="progress" max="100" value="0"></progress>
             </div>
@@ -130,6 +146,16 @@
             <div class="account-label"><span>账户净值</span><i data-i="fund"></i></div>
             <strong id="equity" class="account-value"></strong>
             <div class="account-sub">可用资金 <span id="available"></span></div>
+            <div class="pnl-grid" aria-label="账户实时盈亏">
+              <div><span>浮动盈亏</span><b id="liveUnrealized">0.00</b></div>
+              <div><span>已实现盈亏</span><b id="liveRealized">0.00</b></div>
+              <div><span>累计盈亏</span><b id="liveTotalPnl">0.00</b></div>
+            </div>
+            <div class="position-strip">
+              <span id="positionSummary">空仓</span
+              ><button id="quickClose" class="flatten" data-action="closePosition" disabled>一键平仓</button>
+            </div>
+            <div id="contractInfo" class="contract-info" hidden></div>
             <div class="sides">
               <button id="buy" data-side="buy">买入 / 做多</button
               ><button id="sell" data-side="sell">卖出 / 做空</button>
@@ -152,7 +178,7 @@
               ><input type="number" id="limitPrice" min="0.000001" step="any" inputmode="decimal"
             /></label>
             <div class="field">
-              <label for="qty">交易数量 <small>单位</small></label>
+              <label for="qty">交易数量 <small id="qtyUnit">单位</small></label>
               <div class="qty-control">
                 <button data-action="less" aria-label="减少数量"><i data-i="minus"></i></button
                 ><input id="qty" type="number" min="1" step="1" value="1" inputmode="numeric" /><button
@@ -175,6 +201,9 @@
               </div>
             </details>
             <div class="estimate"><span>预计名义金额</span><b id="notional"></b></div>
+            <div class="estimate" id="marginEstimateRow" hidden>
+              <span>每手参考保证金</span><b id="marginEstimate"></b>
+            </div>
             <button class="submit" data-action="submit" id="submitOrder">模拟买入</button>
             <div class="ticket-foot" id="feeHint"></div>
           </div>
