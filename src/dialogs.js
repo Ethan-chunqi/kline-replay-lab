@@ -1,3 +1,4 @@
+import { DEFAULT_INITIAL_CASH } from './engine.js?v=20261120c';
 import { parseBarsCSV } from './import.js';
 import { futuresTerms } from './eastmoney.js';
 
@@ -119,9 +120,6 @@ function options(pairs, selected) {
 export function openNew(api, ctx) {
   const account = ctx.session.account;
   const marketPairs = ctx.markets.map((m) => [m.id, m.name + ' · ' + m.currency]);
-  const futureStart = 1000000;
-  const spotStart = 100000;
-  const capital = account?.initialCash ?? spotStart;
   const sources =
     '<optgroup label="东方财富">' +
     options(
@@ -153,7 +151,7 @@ export function openNew(api, ctx) {
       '<p id="feed-description" class="note"></p></div>' +
       '<div id="csv-controls" hidden><label class="field"><span>历史行情文件</span><input class="file-field" type="file" name="file" accept=".csv,.tsv,text/csv,text/tab-separated-values"></label><p class="note">支持中英文表头。必填日期或时间、开盘、最高、最低和收盘，成交量可选。每次 30–20,000 根，文件上限 8 MB。</p></div>' +
       '<div class="twocol">' +
-      inputNumber('capital', '初始资金（本币）', capital, 1, 1000000000000, 'any') +
+      inputNumber('capital', '初始资金（本币）', DEFAULT_INITIAL_CASH, 1, 1000000000000, 'any') +
       '<label class="field" id="start-field"><span>回放起点</span><select name="start"><option value="fixed">标准起点</option><option value="random">随机起点</option><option value="manual">指定第几根</option></select></label></div>' +
       '<div id="custom-start" hidden>' +
       inputNumber('nth', '从第几根开始', 120, 1, 20000, 1) +
@@ -175,12 +173,10 @@ export function openNew(api, ctx) {
     kind = get('kind'),
     start = get('start'),
     file = get('file');
-  const capitalInput = get('capital'),
-    feedBase = get('feedBase'),
+  const feedBase = get('feedBase'),
     nth = get('nth'),
     submit = get('create');
   let lastMarket, lastSource;
-  let chosenCapital = ![spotStart, futureStart].includes(capital);
 
   function update() {
     const feed = isFeed(base.value);
@@ -223,8 +219,6 @@ export function openNew(api, ctx) {
       description = '请选择与文件中 OHLC 对应的交易品种。该选择决定每点盈亏与保证金。';
     }
     body().querySelector('#kind-description').textContent = description;
-    if (!chosenCapital)
-      capitalInput.value = kind.value === 'future' ? futureStart : kind.value === 'spot' ? spotStart : '';
     body().querySelector('#feed-controls').hidden = !feed;
     feedBase.disabled = !feed;
     body().querySelector('#feed-description').textContent =
@@ -241,9 +235,6 @@ export function openNew(api, ctx) {
     error.textContent = '';
   }
   for (const control of [base, market, kind, start]) control.addEventListener('change', update);
-  capitalInput.addEventListener('input', () => {
-    chosenCapital = true;
-  });
   update();
 
   form.addEventListener('submit', async (event) => {
@@ -255,7 +246,7 @@ export function openNew(api, ctx) {
       marketId: targetMarket.id,
       kind: kind.value,
       base: feed ? feedBase.value : base.value,
-      initialCash: Number(capitalInput.value),
+      initialCash: Number(get('capital').value),
       feeBps: Number(get('fee').value),
       slippageBps: Number(get('slip').value),
       allowShort: get('short').checked,

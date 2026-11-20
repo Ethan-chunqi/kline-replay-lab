@@ -7,6 +7,7 @@ import { loadChartFeed } from './feed-service.js';
 import { fetchEastmoneyQuote, futuresTerms } from './eastmoney.js';
 import { tradingBar, applyLiveQuote } from './live.js';
 import {
+  DEFAULT_INITIAL_CASH,
   createAccount,
   getSnapshot,
   advanceBar,
@@ -14,10 +15,10 @@ import {
   cancelOrder,
   closePosition,
   updateProtection,
-} from './engine.js';
+} from './engine.js?v=20261120c';
 import { createTradingChart } from './chart.js';
 import { renderJournal } from './journal.js';
-import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261120b';
+import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261120c';
 import { openStorage } from './storage.js';
 import { icon } from './icons.js';
 
@@ -233,6 +234,7 @@ function makeSession(config = {}) {
     period: config.period || 'BASE',
     periodSchema: 2,
     historicalHome: true,
+    customCapital: config.customCapital ?? (account.initialCash !== DEFAULT_INITIAL_CASH),
     feed: config.feed || null,
     live: !!config.live,
     scenarioId: config.scenarioId || crypto.randomUUID(),
@@ -997,14 +999,15 @@ function sessionConfig() {
     period: s.period,
     scenarioId: s.scenarioId || s.id,
     initialCash: a.initialCash,
+    // Older sessions stored the amount but did not record whether it was user-entered.
+    customCapital: s.customCapital ?? (a.initialCash !== (a.contract ? 1_000_000 : 100_000)),
     contract: a.contract,
     feeBps: a.feeBps,
     slippageBps: a.slippageBps,
     allowShort: a.allowShort,
   };
 }
-function restartAt(startIndex) {
-  const cfg = sessionConfig();
+function restartAt(startIndex, cfg = sessionConfig()) {
   // Replay keeps an immutable copy of the series at the instant of the jump.
   if (cfg.customBars) cfg.customBars = structuredClone(cfg.customBars);
   const next = makeSession({ ...cfg, startIndex });
@@ -1089,7 +1092,7 @@ function replaySession(config, dataset, display) {
   return makeSession({
     marketId, kind, base: dataset.base, period: dataset.base === period ? 'BASE' : period,
     customBars: dataset.bars, contract, startIndex: chooseStart(dataset.bars, marketId, history, longRunBounds(dataset, marketId)),
-    initialCash: config.initialCash ?? (contract ? 1000000 : 100000), feeBps: config.feeBps,
+    initialCash: config.initialCash, customCapital: config.customCapital, feeBps: config.feeBps,
     slippageBps: config.slippageBps, allowShort: config.allowShort,
     feed: {
       kind, symbol: dataset.symbol, name: dataset.name, historySource: dataset.historySource,
@@ -1109,6 +1112,7 @@ async function randomPeriod() {
   renderPlay();
   try {
     const cfg = sessionConfig();
+    if (!cfg.customCapital) cfg.initialCash = DEFAULT_INITIAL_CASH;
     const display = effectivePeriod(s.period);
     if (s.base !== 'CSV') {
       const archive = await readReplayArchive(s.marketId, cfg.kind, display, isCurrent);
@@ -1132,7 +1136,7 @@ async function randomPeriod() {
     const start = chooseStart(bars, s.marketId, prior, {
       currentIndex: s.cursor, previousStart: s.start, blockedStarts: related.map((other) => other.start),
     });
-    await restartAt(start);
+    await restartAt(start, cfg);
     notify('已跳至 ' + fmtTime(bars[s.cursor].time, market.timeZone) + ' · 本段行情内抽取');
   } catch (error) {
     if (isCurrent()) notify('抽取未完成：' + error.message);
@@ -1327,7 +1331,7 @@ function openAnchor({
     customBars: data.bars,
     startIndex: data.startIndex,
     contract: data.contract,
-    initialCash: initialCash ?? (data.contract ? 1000000 : 100000),
+    initialCash,
     feeBps,
     slippageBps,
     allowShort,
@@ -1506,7 +1510,7 @@ async function startFeed({
       quote: dataset.quote,
       contract,
       startIndex,
-      initialCash: initialCash ?? (contract ? 1000000 : 100000),
+      initialCash,
       feeBps,
       slippageBps,
       allowShort,

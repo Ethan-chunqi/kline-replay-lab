@@ -1,4 +1,5 @@
 // One instrument per training account. Margin trading requires an explicit futures contract.
+export const DEFAULT_INITIAL_CASH = 500_000;
 const EPSILON = 1e-9;
 const emptyPosition = () => ({ qty: 0, avgPrice: 0, entryFees: 0, takeProfit: null, stopLoss: null });
 const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
@@ -50,7 +51,7 @@ function contractTerms(contract) {
 }
 
 export function createAccount({
-  initialCash = 100000,
+  initialCash = DEFAULT_INITIAL_CASH,
   feeBps = 3,
   slippageBps = 2,
   allowShort = true,
