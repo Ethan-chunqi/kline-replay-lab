@@ -1372,3 +1372,8 @@ dialog::backdrop {
     height: 23px;
   }
 }
+@media (max-width: 359px) {
+  .mast .new i { display: none; }
+  .mast .nav { padding-inline: 0; }
+  .mast .brand { gap: 3px; }
+}
