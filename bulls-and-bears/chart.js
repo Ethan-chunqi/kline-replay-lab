@@ -1,19 +1,21 @@
+import {koreanHours} from './equities/korea-session.js?v=20261122-market-v3';
 import {
   CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineStyle, TickMarkType, createChart,
 } from './vendor/lightweight-charts-5.3.0.mjs';
-import { intervalMs, rememberCryptoLevel } from './crypto-intervals.js';
+import { intervalMs, rememberCryptoLevel } from './crypto-intervals.js?v=20261122-market-v3';
 
 const hour = intervalMs['1h'];
-const decimals = { BTCUSDT: 2, BNBUSDT: 2, HYPEUSDT: 4, SOLUSDT: 3, ZECUSDT: 2 };
+const decimals = { BTCUSDT: 2, BNBUSDT: 2, HYPEUSDT: 4, SOLUSDT: 3, ZECUSDT: 2, OKBUSDT:2, BGBUSDT:4 };
 const locales = { zh: 'zh-CN', en: 'en-US', ja: 'ja-JP', ko: 'ko-KR', ru: 'ru-RU' };
 const palettes = {
-  dark: { background: '#181a20', axis: '#84919e', grid: '#2b3038', label: '#474e59', cross: '#6f7b8a', gold: '#f0b90b', up: '#0ecb81', down: '#f6465d', upVolume: '#1c5141', downVolume: '#67333c' },
-  light: { background: '#ffffff', axis: '#5c6572', grid: '#e4e8ed', label: '#526176', cross: '#8793a2', gold: '#b77e00', up: '#0d9468', down: '#dc4257', upVolume: '#a5d9c4', downVolume: '#efb3ba' },
+  dark: { background: '#181a20', axis: '#84919e', grid: '#2b3038', label: '#474e59', cross: '#6f7b8a', gold: '#fff28a', goldEdge:'#ffe325', goldHalo:'rgba(255,221,36,.86)', up: '#0ecb81', down: '#f6465d', upVolume: '#1c5141', downVolume: '#67333c' },
+  light: { background: '#ffffff', axis: '#5c6572', grid: '#e4e8ed', label: '#526176', cross: '#8793a2', gold: '#ffe32b', goldEdge:'#795100', goldHalo:'rgba(255,192,0,.88)', up: '#0d9468', down: '#dc4257', upVolume: '#a5d9c4', downVolume: '#efb3ba' },
 };
 const nyOffset = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' });
 const offsetCache = new Map();
 
 function region(view) {
+  if(view.market==='kr' || view.timeZone==='Asia/Seoul')return 'kr';
   if (view.market === 'perpetual' || Object.hasOwn(decimals, view.symbol)) return 'crypto';
   return ['cn', 'a', 'a-share', 'china'].includes(String(view.market).toLowerCase()) ||
     /\.(SS|SH|SZ|BJ)$|^\d{6}$/.test(view.symbol) ? 'cn' : 'us';
@@ -22,7 +24,7 @@ function region(view) {
 // The library uses UTC for its tick grid. Shift timestamps for display, retaining the
 // actual epoch for all price comparisons, market-session checks and hover callbacks.
 function plotTime(ms, market) {
-  let offset = 8;
+  let offset = market==='kr'?9:8;
   if (market === 'us') {
     const day = Math.floor(ms / 86_400_000);
     if (!offsetCache.has(day)) {
@@ -43,6 +45,10 @@ function inStockSession(ms, market) {
   const weekday = local.getUTCDay();
   if (weekday === 0 || weekday === 6) return false;
   const minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  if (market==='kr') {
+    const [opening,closing]=koreanHours(local.toISOString().slice(0,10));
+    return minutes>=opening && minutes<closing;
+  }
   return market === 'us' ? minutes >= 570 && minutes < 960 :
     (minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900);
 }
@@ -114,11 +120,50 @@ export function createChartView(container, onHover = () => {}, options = {}) {
   volume.priceScale().applyOptions({ scaleMargins: { top: 0.83, bottom: 0 } });
   const candles = chart.addSeries(CandlestickSeries, { borderVisible: false, priceLineVisible: false, lastValueVisible: false });
 
+  // Highlight the verified price bar in place. A separate pane primitive preserves
+  // a bright core, contrasting edge and small diamond even when thousands of bars
+  // share a screen pixel. The overlay is drawn only at the two exact data points.
+  const extremeOverlay = {
+    zOrder: () => 'top',
+    renderer: () => ({draw(target) {
+      const palette=palettes[view.theme] ?? palettes.dark;
+      const scale=chart.timeScale();
+      target.useMediaCoordinateSpace(({context:ctx,mediaSize:size})=>{
+        for (const i of new Set([matches.high,matches.low])) {
+          const row=rows[i];
+          if (!row) continue;
+          const x=scale.timeToCoordinate(row.time);
+          if (x==null || x<0 || x>size.width) continue;
+          const [top,bottom,o,c]=[row.high,row.low,row.open,row.close].map(value=>candles.priceToCoordinate(value));
+          if ([top,bottom,o,c].some(v=>v==null) || top>size.height || bottom<0) continue;
+          const width=Math.max(2.5,Math.min(15,scale.options().barSpacing*.72));
+          const y=Math.min(o,c), height=Math.max(2,Math.abs(c-o));
+          ctx.save();
+          ctx.shadowBlur=9;ctx.shadowColor=palette.goldHalo;
+          ctx.lineWidth=3;ctx.strokeStyle=palette.goldEdge;
+          ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,bottom);ctx.stroke();
+          ctx.shadowBlur=0;ctx.lineWidth=1;ctx.strokeStyle=palette.gold;
+          ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,bottom);ctx.stroke();
+          ctx.fillStyle=palette.gold;ctx.strokeStyle=palette.goldEdge;ctx.lineWidth=1.2;
+          ctx.fillRect(x-width/2,y,width,height);ctx.strokeRect(x-width/2,y,width,height);
+          for(const [at,delta] of [[matches.high===i?top:null,-8],[matches.low===i?bottom:null,8]]) {
+            if(at==null)continue;
+            const marker=Math.max(5,Math.min(size.height-5,at+delta));
+            ctx.shadowBlur=5;ctx.shadowColor=palette.goldHalo;
+            ctx.beginPath();ctx.moveTo(x,marker-3.7);ctx.lineTo(x+3.7,marker);ctx.lineTo(x,marker+3.7);ctx.lineTo(x-3.7,marker);ctx.closePath();ctx.fill();ctx.stroke();
+          }
+          ctx.restore();
+        }
+      });
+    }}),
+  };
+  candles.attachPrimitive({paneViews:()=>[extremeOverlay]});
+
   function configure(lastPrice) {
     const palette = palettes[view.theme] ?? palettes.dark;
     const locale = locales[String(view.locale).split('-')[0]] ?? 'zh-CN';
     const digits = Number.isInteger(view.precision) ? Math.max(0, Math.min(8, view.precision)) : decimals[view.symbol] ?? (lastPrice > 0 && lastPrice < 1 ? 4 : 2);
-    const key = [view.theme,locale,digits,view.interval].join('/');
+    const key = [view.theme,locale,digits,view.interval,Boolean(view.yearRange)].join('/');
     if (styleKey === key) return palette;
     styleKey = key;
     const numbers = new Intl.NumberFormat(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -128,7 +173,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       layout: { background: { type: ColorType.Solid, color: palette.background }, textColor: palette.axis },
       localization: { locale, priceFormatter: price => numbers.format(price), timeFormatter: dates.full },
       grid: { horzLines: { color: palette.grid } },
-      timeScale: { borderColor: palette.grid, timeVisible: view.interval !== '1d', tickMarkFormatter: dates.tick },
+      timeScale: { minBarSpacing:view.yearRange ? 0.001 : 0.3, borderColor: palette.grid, timeVisible: view.interval !== '1d', tickMarkFormatter: dates.tick },
       crosshair: { vertLine: { ...cross }, horzLine: { ...cross } },
     });
     candles.applyOptions({ upColor: palette.up, downColor: palette.down, wickUpColor: palette.up, wickDownColor: palette.down,
@@ -138,12 +183,16 @@ export function createChartView(container, onHover = () => {}, options = {}) {
 
   function reset() {
     if (!rows.length || disposed) return;
+    focused = null;
+    hovered = null;
+    chart.clearCrosshairPosition();
+    onHover(null);
     const last = rows.length - 1;
     const width = intervalMs[view.interval];
     const start = rows[last].time - Math.max(0, selectedHours * hour - width) / 1000;
     const byHours = rows.findIndex(b => b.time >= start);
     const minBars = view.interval === '1d' && selectedHours < 24 * 7 ? 90 : 1;
-    const first = Math.max(0, Math.min(byHours, rows.length - minBars));
+    const first = view.yearRange ? 0 : Math.max(0, Math.min(byHours, rows.length - minBars));
     candles.priceScale().setAutoScale(true);
     chart.timeScale().setVisibleLogicalRange({ from: first - 0.5, to: last + 2.5 });
   }
@@ -166,7 +215,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     if (disposed) return;
     const next = { ...defaults, ...context, symbol };
     const switched = next.symbol !== view.symbol || next.sourceId !== view.sourceId || next.interval !== view.interval ||
-      Boolean(next.historical) !== Boolean(view.historical) || region(next) !== region(view);
+      Boolean(next.historical) !== Boolean(view.historical) || Boolean(next.yearRange) !== Boolean(view.yearRange) || region(next) !== region(view);
     const oldHours = selectedHours;
     const previous = switched ? [] : rows;
     if (switched) { hovered = null; focused = null; onHover(null); }
@@ -182,7 +231,8 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     rows = items.map((item, index) => {
       const time = plotTime(item.time, exchange);
       let b = item;
-      if (!view.historical && index === items.length - 1 && Number.isFinite(latestPrice) && latestPrice > 0) {
+      if (!view.historical && index === items.length - 1 && Number.isFinite(latestPrice) && latestPrice > 0 &&
+          (view.interval!=='1m' || (view.asOf>=item.time && view.asOf<item.time+intervalMs['1m']))) {
         b = { ...item, close: latestPrice, high: Math.max(latestPrice,item.high), low: Math.min(latestPrice,item.low) };
       }
       const extremes = [];
@@ -191,7 +241,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       byTime.set(time, extremes.length ? { ...b, extremes } : b);
       return {
         time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
-        volumeColor: b.close >= b.open ? palette.upVolume : palette.downVolume,
+        volumeColor: extremes.length ? palette.gold : b.close >= b.open ? palette.upVolume : palette.downVolume,
         ...(extremes.length ? { color: palette.gold, wickColor: palette.gold, borderColor: palette.gold } : {}),
       };
     });
@@ -234,6 +284,17 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     if (!last) onHover(null);
   }
 
+  function selectBar(bar, price) {
+    focused = hovered = bar.time;
+    onHover(byTime.get(bar.time));
+    // Logical range changes apply on the chart's next draw. Computing the crosshair
+    // coordinates sooner would pin it to the screen position from the old range.
+    requestAnimationFrame(() => {
+      if (!disposed && focused === bar.time && hovered === bar.time)
+        chart.setCrosshairPosition(price,bar.time,candles);
+    });
+  }
+
   function locate(kind) {
     const i = matches[kind];
     if (disposed || !Number.isInteger(i) || i < 0 || !rows[i]) return false;
@@ -242,16 +303,25 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     candles.priceScale().setAutoScale(true);
     chart.timeScale().setVisibleLogicalRange({ from, to: from + 2*half + 0.5 });
     const b = rows[i];
-    focused = b.time;
-    chart.setCrosshairPosition(b[kind], b.time, candles);
-    hovered = b.time;
-    onHover(byTime.get(b.time));
+    selectBar(b,b[kind]);
     return true;
   }
 
+  function focusDate(date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !rows.length) return false;
+    const start=Date.parse(date+'T00:00:00Z')/1000;
+    const index=rows.findIndex(b=>b.time>=start);
+    if(index<0)return false;
+    const width=Math.min(96,rows.length);
+    const first=Math.max(-.5,Math.min(index-4,rows.length-width-.5));
+    candles.priceScale().setAutoScale(true);
+    chart.timeScale().setVisibleLogicalRange({from:first,to:first+width});
+    const b=rows[index];selectBar(b,b.close);
+    return true;
+  }
   configure();
   return {
-    update, reset, locate,
+    update, reset, locate, focusDate,
     destroy() {
       if (disposed) return;
       disposed = true;

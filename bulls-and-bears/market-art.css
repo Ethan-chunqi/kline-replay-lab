@@ -1,0 +1,107 @@
+.hero[data-market-region] {
+  isolation: isolate;
+  position: relative;
+  overflow: hidden;
+}
+.hero[data-market-region]::before,
+.hero[data-market-region]::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  background-repeat: no-repeat;
+}
+.hero[data-market-region="crypto"] {
+  background: radial-gradient(ellipse 37% 175% at 30% 85%, #b0823013, transparent 84%), var(--panel);
+}
+.hero[data-market-region="crypto"]::before {
+  width: clamp(112px, 12vw, 174px);
+  aspect-ratio: 1;
+  left: 24%;
+  top: 53%;
+  transform: translateY(-50%) rotate(-14deg);
+  background: url("./brand/market-bitcoin.webp") center / cover;
+  mask-image: radial-gradient(ellipse at 52% 50%, #000 52%, #000a 65%, transparent 73%);
+  filter: saturate(.72);
+  opacity: .27;
+}
+.hero[data-market-region="us"] {
+  background: radial-gradient(ellipse 52% 180% at 48% 64%, #41638615, transparent 83%), var(--panel);
+}
+.hero[data-market-region="us"]::before {
+  inset: -14% 5% -26% 19%;
+  background: url("./brand/market-us-flag.webp") 50% 37% / 87% auto no-repeat;
+  mask-image: radial-gradient(ellipse 61% 61% at 50% 48%, #000 30%, transparent 92%);
+  transform: rotate(-5deg);
+  opacity: .18;
+}
+.hero[data-market-region="us"]::after {
+  left: 24%;
+  top: -4%;
+  width: clamp(114px, 13vw, 164px);
+  height: 113%;
+  background: url("./brand/market-us-portrait.webp") center 29% / cover;
+  mask-image: radial-gradient(ellipse 62% 68% at 51% 45%, #000 32%, #000e 51%, transparent 87%);
+  filter: grayscale(.77);
+  mix-blend-mode: screen;
+  opacity: .12;
+}
+.hero[data-market-region="cn"] {
+  background: radial-gradient(ellipse 48% 180% at 35% 54%, #a33b3619, transparent 85%), var(--panel);
+}
+.hero[data-market-region="cn"]::before {
+  left: 30%;
+  width: clamp(270px, 35vw, 520px);
+  top: -6%;
+  height: 118%;
+  background: url("./brand/market-cn-flag.webp") left 12% / 100% auto no-repeat;
+  mask-image: radial-gradient(ellipse 68% 86% at 38% 50%, #000 30%, transparent 86%);
+  transform: rotate(-4deg);
+  opacity: .22;
+}
+.hero[data-market-region="cn"]::after {
+  top: -3%;
+  left: 22%;
+  width: clamp(115px, 13vw, 168px);
+  height: 108%;
+  background: url("./brand/market-cn-portrait.webp") center top / contain no-repeat;
+  mask-image: linear-gradient(#000 70%, transparent);
+  mix-blend-mode: screen;
+  opacity: .14;
+}
+:root[data-theme="light"] .hero[data-market-region="cn"]::after { opacity: .10; mix-blend-mode: multiply; }
+.hero[data-market-region="kr"] {
+  background: radial-gradient(ellipse 43% 160% at 37% 60%, #5c72941c, transparent 83%), var(--panel);
+}
+.hero[data-market-region="kr"]::before {
+  inset: -5% auto -5% 22%;
+  width: clamp(170px, 23vw, 305px);
+  background: url("./brand/market-kr-flag.webp") center / contain no-repeat;
+  mask-image: radial-gradient(ellipse 59% 72% at 50% 51%, #000 26%, transparent 91%);
+  transform: rotate(-5deg);
+  opacity: .18;
+}
+.hero[data-market-region="cn"]::before {
+  mask-image: linear-gradient(90deg,transparent,#000 12%,#000 63%,transparent 96%);
+}
+:root[data-theme="light"] .hero[data-market-region="kr"]::before { opacity: .19; }
+:root[data-theme="light"] .hero[data-market-region="crypto"]::before { opacity: .20; }
+:root[data-theme="light"] .hero[data-market-region="us"]::before { opacity: .16; }
+:root[data-theme="light"] .hero[data-market-region="us"]::after { mix-blend-mode: multiply; opacity: .12; }
+:root[data-theme="light"] .hero[data-market-region="cn"]::before { opacity: .15; }
+
+@media (max-width: 800px) {
+  .hero[data-market-region="crypto"]::before,
+  .hero[data-market-region="us"]::after { left: 23%; }
+}
+@media (max-width: 590px) {
+  .hero[data-market-region="crypto"]::before { top: -8px; left: auto; right: 19%; width: 106px; transform: rotate(-14deg); }
+  .hero[data-market-region="us"]::before { opacity: .13; inset: -23% -21% 27% 4%; background-size: 110% auto; }
+  .hero[data-market-region="us"]::after { opacity: .09; top: -2px; left: auto; right: 21%; width: 94px; height: 110px; }
+  .hero[data-market-region="cn"]::after { left: 32%; top: 1px; width: 89px; height: 100px; }
+  .hero[data-market-region="kr"]::before { inset: -7px auto auto 34%; width: 145px; height: 108px; }
+  .hero[data-market-region="cn"]::before { top: -2px; left: 50%; width: 225px; height: 106px; }
+}
+@media (forced-colors: active), (prefers-reduced-transparency: reduce) {
+  .hero[data-market-region]::before, .hero[data-market-region]::after { display: none; }
+}

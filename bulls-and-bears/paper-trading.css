@@ -1,0 +1,20 @@
+.paper-panel { margin-top:14px; padding:16px 18px; }
+.paper-head,.paper-order-head {display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.paper-head h2 {margin:0;font-size:1.08rem}
+.paper-head span,.paper-quote,.paper-order small,.paper-order dt {font-size:.78rem;color:var(--muted)}
+.paper-form {display:grid;grid-template-columns:minmax(120px,1.4fr) minmax(85px,.8fr) minmax(100px,1fr) auto;align-items:end;gap:10px;margin:15px 0 9px}
+.paper-form label {display:grid;gap:4px;font-size:.82rem;color:var(--soft);min-width:0}
+.paper-form :is(input,select),.paper-close,.paper-form button {width:100%;min-height:38px;border:1px solid var(--line-light);border-radius:5px;background:var(--control);padding:6px 9px;color:var(--text)}
+.paper-form button {width:auto;border-color:var(--chart-accent);background:var(--selected);color:var(--selected-text);font-weight:650}
+.paper-form button:disabled,.paper-close:disabled {opacity:.57;cursor:not-allowed}
+.paper-close {width:auto;min-height:31px;font-size:.8rem}
+.paper-quote,.paper-feedback {margin:5px 0 0}
+.paper-feedback {color:var(--soft);font-size:.8rem}
+.paper-order {border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
+.paper-order dl {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:8px 0}
+.paper-order dd {margin:1px 0 0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.paper-order dd[data-tone=positive] {color:var(--up)}
+.paper-order dd[data-tone=negative] {color:var(--down)}
+@media(max-width:650px) {
+  .paper-panel{padding:13px}.paper-form,.paper-order dl{grid-template-columns:repeat(2,minmax(0,1fr))}
+}

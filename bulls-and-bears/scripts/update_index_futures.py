@@ -113,9 +113,9 @@ def archive_month(month,contracts):
     return result
 
 
-def sina(contract,kind):
+def sina(contract,kind,minutes=15):
     url='https://stock.finance.sina.com.cn/futures/api/openapi.php/InnerFuturesNewService.'+kind+'?symbol='+contract
-    if kind=='getFewMinLine':url+='&type=15'
+    if kind=='getFewMinLine':url+='&type='+str(minutes)
     rec=json.loads(request(url))['result']
     if rec['status']['code']!=0 or not rec.get('data'):raise ValueError('Missing actual contract bars')
     return rec['data']
@@ -232,6 +232,20 @@ def publish(args):
         meta={'price':float(q['p']),'asOf':asof,'tradeDay':sd,'source':'东方财富期货','sourceId':'cffex-'+c,
               'dayHigh':float(q['h']),'dayLow':float(q['l']),'prevClose':float(q['zjsj']),'sessionEnd':(sd+15*3600)*1000}
         data,_=snapshot({'symbol':product,'region':'cn'},daily,intr,meta)
+        minute_history=prev.get('minuteBars',[]) if prev else []
+        try:
+            one=[]
+            limits={r[0]:r for r in daily}
+            for record in sina(c,'getFewMinLine',1):
+                t=stamp(record['d'],'%Y-%m-%d %H:%M:%S')-60
+                item=checked_bar(t,[record[k] for k in ('o','h','l','c','v')])
+                trading_day=((t+8*3600)//86400)*86400-8*3600
+                bound=limits.get(trading_day)
+                if item and bound and item[2]<=bound[2]+.201 and item[3]>=bound[3]-.201 and t+60<=asof:one.append(item)
+            minute_history=stitch(minute_history,one) if one else minute_history
+        except (ValueError,OSError,KeyError):
+            pass
+        data['minuteBars']=minute_history
         margin=margins.get(c,{})
         buy=margin_rate(margin.get('合约多头保证金标准'));sell=margin_rate(margin.get('合约空头保证金标准'))
         data.update(contract=c,multiplier=TYPES[product],tick=.2,marginRate=buy if buy==sell else None,

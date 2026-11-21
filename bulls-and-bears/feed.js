@@ -1,11 +1,13 @@
+import {perpetualSources,bitgetPath} from './perpetuals.js?v=20261122-market-v3';
 // Public trade-price candles for USDT-settled perpetual contracts. Bar timestamps and quote timestamps are Unix milliseconds.
 const INTERVAL = 15 * 60_000;
 const HISTORY = 675;
 const STALE_AFTER = 16_000;
-const symbols = new Set(['BTCUSDT', 'BNBUSDT', 'HYPEUSDT', 'SOLUSDT', 'ZECUSDT']);
+const symbols = new Set(Object.keys(perpetualSources));
 const verifiedUntil = new Map();
 
 const feeds = [
+  { source:'Bitget',sourceId:'bitget-usdt',base:'https://api.bitget.com' },
   { source: 'Binance', sourceId: 'binance-usdm', base: 'https://fapi.binance.com' },
   { source: 'Bybit', sourceId: 'bybit-linear', base: 'https://api.bybit.com' },
   { source: 'Bybit', sourceId: 'bybit-linear', base: 'https://api.bytick.com' },
@@ -59,6 +61,11 @@ async function verifyContract(feed, instrument, signal) {
         verifiedUntil.set(feed.base + '/' + s.symbol, expiry);
       }
     }
+  } else if(feed.sourceId==='bitget-usdt') {
+    const data=await fetchJSON(bitgetPath('contracts',symbol),signal);
+    if(data.code==='00000' && data.data.some(s=>s.symbol===symbol && s.baseCoin+'USDT'===symbol &&
+      s.quoteCoin==='USDT' && s.supportMarginCoins?.includes('USDT') && s.symbolType==='perpetual' &&
+      s.symbolStatus==='normal'))verifiedUntil.set(key,expiry);
   } else {
     const data = await fetchJSON(feed.base + '/v5/market/instruments-info?category=linear&symbol=' + symbol, signal);
     const valid = data.retCode === 0 && data.result?.category === 'linear' && data.result.list.some(s =>
@@ -82,6 +89,10 @@ async function readMarket(feed, full, instrument, signal) {
     }
     candles = data.result.list.map(r => bar(...r)).reverse();
     asOf = +data.time;
+  } else if(feed.sourceId==='bitget-usdt') {
+    const raw=await fetchJSON(bitgetPath('candles',symbol,{granularity:'15m',limit:count}),signal);
+    if(raw.code!=='00000' || !Array.isArray(raw.data))throw Error('Invalid Bitget perpetual data');
+    candles=raw.data.map(r=>bar(...r));asOf=+raw.requestTime;
   } else {
     const data = await fetchJSON(feed.base + '/fapi/v1/klines?symbol=' + symbol + '&interval=15m&limit=' + count + '&endTime=' + requestAt, signal);
     if (!Array.isArray(data) || !data.every(r => r[6] - r[0] === INTERVAL - 1)) {
@@ -101,7 +112,7 @@ async function readMarket(feed, full, instrument, signal) {
 
 function readSnapshot(data, instrument) {
   if (!data || data.symbol !== instrument.symbol || data.interval !== instrument.interval || data.market !== instrument.market ||
-      !feeds.some(f => f.source === data.source && f.sourceId === data.sourceId) ||
+      !perpetualSources[instrument.symbol]?.includes(data.sourceId) || !feeds.some(f => f.source === data.source && f.sourceId === data.sourceId) ||
       !Number.isSafeInteger(data.asOf) || data.asOf > Date.now() + 5000) return null;
   checkBars(data.candles, 673);
   const last = data.candles.at(-1);
@@ -213,7 +224,7 @@ export function startFeed(onUpdate, symbol = 'BTCUSDT') {
   }
 
   async function discover() {
-    for (const candidate of feeds) {
+    for (const candidate of feeds.filter(f=>perpetualSources[symbol].includes(f.sourceId))) {
       if (stopped || navigator.onLine === false) return false;
       try {
         const [, data] = await Promise.all([verifyContract(candidate, instrument, signal), readMarket(candidate, true, instrument, signal)]);

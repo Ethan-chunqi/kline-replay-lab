@@ -16,6 +16,20 @@ import urllib.parse
 import urllib.request
 from zoneinfo import ZoneInfo
 
+
+def kr_poll(info):
+    url = 'https://polling.finance.naver.com/api/realtime/domestic/stock/' + info['symbol']
+    rows = fetch([url]).get('datas', [])
+    row = next((r for r in rows if r.get('itemCode') == info['symbol']), None)
+    if not row or row['stockExchangeType']['zoneId'] != 'Asia/Seoul':
+        raise ValueError('Missing Korean market capitalisation')
+    cap = int(row['marketValueFullRaw'])
+    stamp = int(dt.datetime.fromisoformat(row['localTradedAt']).timestamp()) * 1000
+    if cap <= 0:
+        raise ValueError('Invalid market capitalisation')
+    return {'marketCap':cap, 'marketCapAsOf':stamp, 'marketCapSource':'Naver Pay Securities'}
+
+
 ROOT = Path(__file__).resolve().parent.parent
 SITE = next(p for p in (ROOT / 'dist/equities', ROOT / 'equities') if (p / 'catalog.js').exists())
 CATALOG = json.loads((SITE / 'catalog.js').read_text().split('=', 1)[1].strip().rstrip(';'))
@@ -50,11 +64,11 @@ def day_start(stamp, zone):
     return int(dt.datetime.fromtimestamp(stamp, zone).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
 
 
-def checked_bar(stamp, vals):
+def checked_bar(stamp, vals, allow_negative=False):
     if any(v is None for v in vals[:4]):
         return None
     o, h, l, c = (round(float(x), 6) for x in vals[:4])
-    if not (0 < l <= min(o, c) <= max(o, c) <= h) or not all(map(math.isfinite, [o,h,l,c])):
+    if (l <= 0 and not allow_negative) or not (l <= min(o, c) <= max(o, c) <= h) or not all(map(math.isfinite, [o,h,l,c])):
         return None
     vol = float(vals[4] or 0)
     return [stamp, o, h, l, c, int(round(vol))]
@@ -88,15 +102,26 @@ def yahoo_bars(rec, zone, daily):
 def us_data(info, prev, inc):
     now = int(time.time())
     zone = ZoneInfo(info['timeZone'])
+    korean = info['region']=='kr'
+    if korean:
+        import korea
+        bars = korea.intraday(info,15,fetch,checked_bar)
     intr = yahoo(info, {'interval':'15m','range':'1mo','includePrePost':'false','region':'US'})
-    bars = yahoo_bars(intr, zone, False)
+    if not korean:
+        bars = yahoo_bars(intr, zone, False)
     start = now - DAY * 40 if inc and prev else -2208988800
     if inc and prev and now - prev[-1][0] > 35 * DAY:
         start = -2208988800
     def daily(s):
         return yahoo(info, {'period1':s, 'period2':now + DAY, 'interval':'1d', 'events':'splits', 'region':'US'})
-    raw = daily(start)
-    fresh = yahoo_bars(raw, zone, True)
+    from_naver = korean and info['type']=='index'
+    if from_naver:
+        raw = {}
+        fresh = korea.daily(info,fetch,checked_bar)
+        start = -2208988800
+    else:
+        raw = daily(start)
+        fresh = yahoo_bars(raw, zone, True)
     # A split (or a historical restatement in the overlap) puts all older data on a new basis.
     if start > 0:
         existing = {r[0]:r for r in prev}
@@ -114,6 +139,22 @@ def us_data(info, prev, inc):
     period = meta.get('currentTradingPeriod',{}).get('regular',{})
     if period.get('end') and day_start(period['end'],zone) == quote['tradeDay']:
         quote['sessionEnd'] = period['end'] * 1000
+    if korean:
+        local_day=dt.datetime.fromtimestamp(quote['tradeDay'],zone)
+        _, closing=korea.hours(local_day.date())
+        session_end=quote['tradeDay']+closing*60
+        quote['sessionEnd']=session_end*1000
+        quote['asOf']=min(now,session_end,meta['regularMarketTime'])
+        quote['intradaySourceId']='naver-krx'
+        quote['intradaySource']='Naver Pay Securities'
+        if from_naver:
+            quote['sourceId']='naver-krx'
+            quote['source']='Naver Pay Securities'
+            quote['price']=fresh[-1][4] if fresh[-1][0]==quote['tradeDay'] and now>=session_end else bars[-1][4]
+            quote['dayHigh']=fresh[-1][2] if fresh[-1][0]==quote['tradeDay'] else None
+            quote['dayLow']=fresh[-1][3] if fresh[-1][0]==quote['tradeDay'] else None
+        if info['type']=='stock':
+            quote.update(kr_poll(info))
     return history, bars, quote
 
 
@@ -130,9 +171,20 @@ def cn_daily(info, start, end):
     rec = raw['data'][s]
     zone = ZoneInfo(info['timeZone'])
     rows = []
-    for r in rec.get('day', rec.get('qfqday', [])):
+    stock = info['type'] == 'stock'
+    values = rec.get('qfqday') if stock else rec.get('day')
+    if values is None:
+        # Tencent returns day when the requested period has no adjusted variant.
+        if stock and 'day' in rec and not rec['day']:
+            return []
+        # During periods with no corporate-action adjustment, Tencent may return raw rows.
+        # Confirm these rows belong to the latest, unadjusted segment before using them.
+        if stock and 'day' in rec and rec.get('day'):
+            raise ValueError('Expected qfqday for '+s+' '+start)
+        values = []
+    for r in values:
         stamp = int(dt.datetime.strptime(r[0], '%Y-%m-%d').replace(tzinfo=zone).timestamp())
-        bar = checked_bar(stamp,[r[1],r[3],r[4],r[2],r[5]])
+        bar = checked_bar(stamp,[r[1],r[3],r[4],r[2],r[5]],allow_negative=stock)
         if bar:
             rows.append(bar)
     if len(rows) >= 640:
@@ -155,7 +207,12 @@ def cn_data(info, prev, inc):
         begin = end + dt.timedelta(days=1)
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         parts = list(pool.map(lambda p:cn_daily(info,*p), pieces))
-    history = stitch(prev if inc else [], [r for part in parts for r in part])
+    fresh = [r for part in parts for r in part]
+    if info['type']=='stock' and inc and prev:
+        existing = {r[0]: r for r in prev[:-1]}
+        if any(r[0] in existing and any(abs(r[i]-existing[r[0]][i])>.0011 for i in range(1,5)) for r in fresh):
+            return cn_data(info,[],False)
+    history = stitch(prev if inc else [], fresh)
     path = '/appstock/app/kline/mkline?param='+s+',m15,,640'
     rec = fetch(['https://ifzq.gtimg.cn'+path,'https://web.ifzq.gtimg.cn'+path])['data'][s]
     rows = []
@@ -171,6 +228,12 @@ def cn_data(info, prev, inc):
     quote = {'price':float(q[3]), 'asOf':min(int(time.time()),quote_time,rows[-1][0]+900),
              'prevClose':float(q[4]), 'dayHigh':float(q[33]), 'dayLow':float(q[34]), 'tradeDay':day_start(rows[-1][0],zone),
              'source':'腾讯证券', 'sourceId':'tencent-index', 'splitBasis':'指数点位', 'sessionEnd':(day_start(rows[-1][0],zone)+15*3600)*1000, 'delayMinutes':None}
+    if info['type']=='stock':
+        quote.update(sourceId='tencent-stock-qfq',intradaySourceId='tencent-stock-raw',splitBasis='日K前复权，分时不复权')
+        cap=float(q[45])*100_000_000
+        if not math.isfinite(cap) or cap<=0:
+            raise ValueError('Missing total market capitalization')
+        quote.update(marketCap=round(cap),marketCapAsOf=quote['asOf']*1000)
     return history,rows,quote
 
 
@@ -188,7 +251,8 @@ def snapshot(info, days, intr, meta):
     if not session_bars:
         raise ValueError('Missing session candles')
     prev_day = [r for r in days if r[0] < session][-1]
-    meta['prevClose'] = prev_day[4]
+    if meta['sourceId']!='tencent-stock-qfq':
+        meta['prevClose'] = prev_day[4]
     meta['dayHigh'] = meta['dayHigh'] or max(r[2] for r in session_bars)
     meta['dayLow'] = meta['dayLow'] or min(r[3] for r in session_bars)
     # Persist the active session in the daily history, including its official published high and low.
@@ -214,12 +278,14 @@ def snapshot(info, days, intr, meta):
     elif low is None or peak_day[3] < low['price']:
         choose(point(peak_day,4),hi)  # the closing print followed or equalled the day's high
         uncertain = point(peak_day,3)
-        ath_rows = [r for r in intr if peak_day[0] <= r[0] < peak_day[0]+DAY]
+        # Earlier unadjusted share trades cannot establish ordering on the current adjustment basis.
+        intr_comparable = meta['sourceId']!='tencent-stock-qfq' or peak_day[0]==session
+        ath_rows = [r for r in intr if intr_comparable and peak_day[0] <= r[0] < peak_day[0]+DAY]
         hit = next((i for i,r in enumerate(ath_rows) if abs(r[2]-high['price'])<=max(.00001,high['price']*1e-7)), None)
-        regular_end = peak_day[0] + (15 if info['region']=='cn' else 16)*3600
+        regular_end = peak_day[0] + int({'cn':15, 'kr':15.5, 'us':16}[info['region']]*3600)
         if peak_day[0]==session:
             regular_end=min(regular_end,meta['asOf'],meta.get('sessionEnd',regular_end*1000)/1000)
-        opening = peak_day[0]+int(9.5*3600)
+        opening = peak_day[0]+int((9 if info['region']=='kr' else 9.5)*3600)
         expected = [t for t in range(opening,math.ceil(regular_end),900)
                     if info['region']!='cn' or not peak_day[0]+int(11.5*3600)<=t<peak_day[0]+13*3600]
         if hit is not None and [r[0] for r in ath_rows] == expected and min(r[3] for r in ath_rows)<=peak_day[3]+.00001:
@@ -255,6 +321,45 @@ def atomic(path, raw):
     os.replace(tmp,path)
 
 
+def minute_snapshot(info):
+    if info['region']=='cn':
+        rows=cn_minutes(info)
+        return rows,'tencent-stock-raw' if info['type']=='stock' else 'tencent-index','腾讯行情'
+    if info['region']=='kr':
+        import korea
+        return korea.intraday(info,1,fetch,checked_bar),'naver-krx','Naver Pay Securities'
+    raw=yahoo(info,{'range':'5d','interval':'1m','includePrePost':'false'})
+    z=ZoneInfo(info['timeZone'])
+    q=raw['indicators']['quote'][0]
+    sessions=raw['meta'].get('tradingPeriods',[])
+    if isinstance(sessions,dict):sessions=sessions.get('regular',[])
+    spans={day_start(p['start'],z):(p['start'],p['end']) for group in sessions for p in group}
+    rows=[]
+    for i,t in enumerate(raw.get('timestamp',[])):
+        span=spans.get(day_start(t,z))
+        if not span or not span[0]<=t<span[1]:continue
+        b=checked_bar(t,[q[k][i] if k in q else None for k in ('open','high','low','close','volume')])
+        if b:rows.append(b)
+    if not rows:raise ValueError('No real minute candles')
+    return rows,'yahoo-chart','Yahoo Finance'
+
+
+def cn_minutes(info,before=''):
+    sym=info['providerSymbol']
+    url='https://ifzq.gtimg.cn/appstock/app/kline/mkline?param='+sym+',m1,'+before+',640'
+    rec=fetch([url])['data'][sym]
+    rows=[]
+    for r in rec.get('m1',[]):
+        time_local=dt.datetime.strptime(r[0],'%Y%m%d%H%M').replace(tzinfo=ZoneInfo('Asia/Shanghai'))
+        stamp=int(time_local.timestamp())-60
+        minute=time_local.hour*60+time_local.minute-1
+        if not (570<=minute<690 or 780<=minute<900):
+            continue
+        b=checked_bar(stamp,[r[1],r[3],r[4],r[2],r[5]])
+        if b:rows.append(b)
+    return rows
+
+
 def write(info, args):
     sym = info['symbol']
     history_path = args.output/'history'/(sym+'.json.gz')
@@ -269,11 +374,12 @@ def write(info, args):
                     break
     raw_days, intr, meta = (cn_data if info['region']=='cn' else us_data)(info,prior,args.incremental)
     data,archive = snapshot(info,raw_days,intr,meta)
+    data['minutes'],data['minuteSourceId'],data['minuteSource']=minute_snapshot(info)
     out = args.output/'data'/(sym+'.json')
     # Do not generate commits when the provider still reports exactly the same market quotation.
     if out.exists() and history_path.exists():
         previous = json.loads(out.read_bytes())
-        if previous['asOf']>data['asOf']:
+        if previous['asOf']>data['asOf'] and not (info['region']=='kr' and not previous.get('intradaySourceId') and previous['tradeDay']==data['tradeDay']):
             raise ValueError('Provider returned older data than the stored quotation')
         if {k:v for k,v in previous.items() if k!='generatedAt'}=={k:v for k,v in data.items() if k!='generatedAt'}:
             return sym+' unchanged'
@@ -288,10 +394,10 @@ if __name__=='__main__':
     parser.add_argument('--output',type=Path,default=SITE)
     parser.add_argument('--incremental',action='store_true')
     parser.add_argument('--symbols',nargs='+')
-    parser.add_argument('--region',choices=['us','cn'])
+    parser.add_argument('--region',choices=['us','cn','kr','asia'])
     parser.add_argument('--workers',type=int,default=4)
     args=parser.parse_args()
-    selected=[x for x in CATALOG if (not args.symbols or x['symbol'] in args.symbols) and (not args.region or x['region']==args.region)]
+    selected=[x for x in CATALOG if (not args.symbols or x['symbol'] in args.symbols) and (not args.region or x['region']==args.region or (args.region=='asia' and x['region'] in ('cn','kr')))]
     if not selected:parser.error('No matching instruments')
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         jobs={pool.submit(write,x,args):x['symbol'] for x in selected}
@@ -300,4 +406,16 @@ if __name__=='__main__':
             try:print(future.result(),flush=True)
             except Exception as e:
                 failures.append(jobs[future]);print(jobs[future],str(e),file=sys.stderr,flush=True)
+    for group, filename in [('cn-ai','market-caps.json'), ('kr-ai','market-caps-kr.json')]:
+        if not any(x.get('group')==group for x in selected): continue
+        ranked=[]
+        for info in (x for x in CATALOG if x.get('group')==group):
+            path=args.output/'data'/(info['symbol']+'.json')
+            if not path.exists(): break
+            data=json.loads(path.read_bytes())
+            if not data.get('marketCap') or not data.get('marketCapAsOf'): break
+            ranked.append({k:data[k] for k in ('symbol','marketCap','marketCapAsOf')})
+        else:
+            ranked.sort(key=lambda r:-r['marketCap'])
+            atomic(args.output/filename,json.dumps(ranked,separators=(',',':')).encode())
     sys.exit(1 if failures else 0)

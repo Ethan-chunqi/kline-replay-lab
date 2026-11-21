@@ -1,8 +1,9 @@
+import {perpetualSources,bitgetKlines,venueNames} from './perpetuals.js?v=20261122-market-v3';
 // Native USDT perpetual klines and exact, gap-checked aggregation of the live 15m feed.
-export const intervalMs = { '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '1d': 86_400_000 };
+export const intervalMs = { '1m':60000, '15m': 900_000, '30m': 1_800_000, '1h': 3_600_000, '1d': 86_400_000 };
 const day = intervalMs['1d'];
-const allowed = new Set(['BTCUSDT', 'BNBUSDT', 'HYPEUSDT', 'SOLUSDT', 'ZECUSDT']);
-const hosts = { 'binance-usdm': ['https://fapi.binance.com'], 'bybit-linear': ['https://api.bybit.com', 'https://api.bytick.com'] };
+const allowed = new Set(Object.keys(perpetualSources));
+const hosts = { 'bitget-usdt':['https://api.bitget.com'], 'binance-usdm': ['https://fapi.binance.com'], 'bybit-linear': ['https://api.bybit.com', 'https://api.bytick.com'] };
 const cache = new Map();
 
 function memo(key, task) {
@@ -56,6 +57,8 @@ function rolled(candles, width) {
 
 async function nativeBars(state, interval, start, end, count) {
   const { symbol, sourceId } = state;
+  if(!perpetualSources[symbol]?.includes(sourceId))throw Error('Unverified contract source');
+  if(sourceId==='bitget-usdt')return barsFrom(await bitgetKlines(symbol,interval,start,end,count,json),intervalMs[interval]);
   const binance = sourceId === 'binance-usdm';
   const q = new URLSearchParams({ symbol, limit: String(count) });
   if (binance) {
@@ -64,7 +67,7 @@ async function nativeBars(state, interval, start, end, count) {
     if (start != null) q.set('startTime', String(start));
   } else {
     q.set('category', 'linear');
-    q.set('interval', { '15m':'15', '30m':'30', '1h':'60', '1d':'D' }[interval]);
+    q.set('interval', { '1m':'1','15m':'15', '30m':'30', '1h':'60', '1d':'D' }[interval]);
     q.set('end', String(end));
     if (start != null) q.set('start', String(start));
   }
@@ -145,6 +148,7 @@ export function rememberCryptoLevel(view, kind, candles, index) {
 }
 
 function rememberedBars(state, interval, p, kind) {
+  if(interval==='1m')return null;
   const input = interval === '1d' ? '1d' : '15m';
   const key = memoryKey(state,kind,input);
   let stored = remembered.get(key);
@@ -170,7 +174,7 @@ async function bundledWindow(state, interval, p, kind) {
     if (result.symbol !== symbol || result.sourceId !== sourceId || result.kind !== kind || result.market !== 'perpetual') throw Error('Invalid market');
     return result;
   });
-  const base = interval === '1d' ? '1d' : '15m';
+  const base = interval === '1m' ? '1m' : interval === '1d' ? '1d' : '15m';
   const native = barsFrom(data.windows[base],intervalMs[base]);
   const end = Math.min(state.asOf + 1,native.at(-1).time + intervalMs[base]);
   const bars = rolled(native,intervalMs[interval]).filter(b => b.time + intervalMs[interval] <= end);
@@ -206,16 +210,17 @@ async function nearby(state, interval, point, kind) {
 }
 
 async function get(state, interval, point, kind) {
-  if (state?.market !== 'perpetual' || !allowed.has(state?.symbol) || !hosts[state?.sourceId] || !Object.hasOwn(intervalMs, interval)) {
+  if (state?.market !== 'perpetual' || !allowed.has(state?.symbol) || !perpetualSources[state?.symbol]?.includes(state.sourceId) || !Object.hasOwn(intervalMs, interval)) {
     throw new Error('Unknown perpetual contract or candle interval');
   }
   const base = { symbol: state.symbol, sourceId: state.sourceId, interval, historical: Boolean(point) };
   if (!point) {
+    if(interval==='1m')return {...base,candles:await latestMinutes(state)};
     return { ...base, candles: interval === '1d' ? await currentDays(state) : rolled(state.candles, intervalMs[interval]) };
   }
   if ((point.symbol && point.symbol !== state.symbol) || (point.sourceId && point.sourceId !== state.sourceId) ||
       !Number.isSafeInteger(point.time) || !Number.isFinite(point.price) || (kind && kind !== 'high' && kind !== 'low')) throw new Error('Invalid anchor');
-  const recent = rolled(state.candles, intervalMs[interval]);
+  const recent = interval==='1m' ? [] : rolled(state.candles, intervalMs[interval]);
   if (interval !== '1d' && match(recent, interval, point, kind)) return { ...base, candles: recent };
   if ((point.precisionMs ?? 1) <= intervalMs[interval]) {
     try { return { ...base, candles: await nearby(state, interval, point, kind) }; }
@@ -236,4 +241,197 @@ export async function getCryptoBars(feedState, interval = '15m', { signal, point
   });
   try { return await Promise.race([get(feedState, interval, point, kind), cancelled]); }
   finally { signal.removeEventListener('abort', abort); }
+}
+
+const yearStart = Date.UTC(2026,0,1);
+const quarter = intervalMs['15m'];
+const archiveCache = new Map();
+const prefixCache = new Map();
+let yearDatabase;
+
+function boundedPromise(map,key,limit,build) {
+  if (!map.has(key)) {
+    const value = build().catch(error => { if (map.get(key)===value) map.delete(key); throw error; });
+    map.set(key,value);
+    if (map.size>limit) map.delete(map.keys().next().value);
+  }
+  return map.get(key);
+}
+
+async function readYearArchive(state) {
+  const id = state.symbol+'-'+state.sourceId;
+  return boundedPromise(archiveCache,id,3,async () => {
+    const response = await fetch(new URL('./year/crypto/'+id+'.json.gz',import.meta.url), {
+      credentials:'omit',signal:AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error('Annual archive unavailable');
+    const bytes = await response.arrayBuffer(), start = new Uint8Array(bytes,0,Math.min(2,bytes.byteLength));
+    const stream = new Blob([bytes]).stream();
+    const data = await new Response(start[0]===31 && start[1]===139 ? stream.pipeThrough(new DecompressionStream('gzip')) : stream).json();
+    if (data.schema!==1 || data.symbol!==state.symbol || data.sourceId!==state.sourceId || data.market!=='perpetual' ||
+        data.start!==yearStart || data.width!==quarter || data.end!==yearStart+data.rows.length*quarter) throw new Error('Invalid contract archive');
+    const bars = barsFrom(data.rows,quarter);
+    if (bars[0].time!==yearStart || bars.at(-1).time+quarter!==data.end) throw new Error('Archive range mismatch');
+    return bars;
+  });
+}
+
+function database() {
+  if (!yearDatabase) yearDatabase = new Promise(resolve => {
+    if (!globalThis.indexedDB) { resolve(null); return; }
+    const request = indexedDB.open('verified-contract-history-v1',1);
+    request.onupgradeneeded = () => request.result.createObjectStore('closed-pages');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = request.onblocked = () => resolve(null);
+  });
+  return yearDatabase;
+}
+
+async function closedPage(state, start, end) {
+  const id=[state.symbol,state.sourceId,start,end].join('/');
+  const db=await database();
+  if (db) {
+    const cached=await new Promise(resolve=>{
+      try {
+        const q=db.transaction('closed-pages').objectStore('closed-pages').get(id);
+        q.onsuccess=()=>resolve(q.result);q.onerror=()=>resolve(null);
+      } catch {resolve(null);}
+    });
+    if (cached?.length===(end-start)/quarter && cached[0].time===start && cached.at(-1).time+quarter===end) return cached;
+  }
+  const candles=await nativeBars(state,'15m',start,end-1,(end-start)/quarter);
+  if (candles.length!==(end-start)/quarter || candles[0].time!==start || candles.at(-1).time+quarter!==end) throw new Error('Incomplete annual page');
+  if (db) {
+    try {db.transaction('closed-pages','readwrite').objectStore('closed-pages').put(candles,id);} catch { /* Memory-only also works. */ }
+  }
+  return candles;
+}
+
+async function yearPrefix(state,cut,signal) {
+  const key=[state.symbol,state.sourceId,cut].join('/');
+  const build=async () => {
+    let base;
+    try {base=await readYearArchive(state);} catch {base=[];}
+    const length=Math.max(0,Math.min(base.length,(cut-yearStart)/quarter));
+    const prefix=base.slice(0,length);
+    let cursor=yearStart+length*quarter;
+    while (cursor<cut) {
+      signal?.throwIfAborted();
+      // Weekly pages fit both venues' 1,000-row ceilings. Only closed pages are cached.
+      const stop=Math.min(cut,cursor+7*day);
+      prefix.push(...await closedPage(state,cursor,stop));
+      cursor=stop;
+    }
+    return {bars:prefix,frames:new Map()};
+  };
+  for (;;) {
+    signal?.throwIfAborted();
+    try {return await boundedPromise(prefixCache,key,3,build);}
+    catch(error) {
+      // A newer interval may have joined the old interval's still-pending request.
+      // Retry with this caller's signal when the original caller switched away.
+      if(signal?.aborted || error?.name!=='AbortError')throw error;
+    }
+  }
+}
+
+export async function loadCryptoYear(state, interval, signal, selectedDate) {
+  if (state?.market!=='perpetual' || !allowed.has(state.symbol) || !perpetualSources[state.symbol]?.includes(state.sourceId) || !intervalMs[interval] ||
+      !state.candles?.length || !Number.isSafeInteger(state.asOf)) throw new Error('Invalid current contract');
+  signal?.throwIfAborted();
+  if(interval==='1m')return minuteDay(state,selectedDate,signal);
+  const cut=Math.max(yearStart,Math.ceil(state.candles[0].time/day)*day);
+  const width=intervalMs[interval], source=venueNames[state.sourceId];
+  const identity={symbol:state.symbol,sourceId:state.sourceId,source,interval};
+  try {
+    const prefix=await yearPrefix(state,cut,signal);
+    signal?.throwIfAborted();
+    if (!prefix.frames.has(interval)) prefix.frames.set(interval,rolled(prefix.bars,width));
+    const recent=state.candles.filter(b=>b.time>=cut && b.time<=state.asOf);
+    if (!recent.length || recent[0].time!==cut || recent.some((b,i)=>i && b.time!==recent[i-1].time+quarter)) throw new Error('Live tail gap');
+    const candles=prefix.frames.get(interval).concat(rolled(recent,width));
+    return {...identity,candles,coverage:'full',asOf:state.asOf};
+  } catch(error) {
+    if(signal?.aborted)throw error;
+    // Do not stitch an unreachable gap. Render the verified part and state its end date.
+    let archived;
+    try {archived=await readYearArchive(state);} catch { /* Source may be unreachable. */ }
+    signal?.throwIfAborted();
+    if (archived?.length) {
+      const closed=archived.filter(b=>b.time+quarter-1<=state.asOf);
+      const end=closed.at(-1)?.time+quarter;
+      const candles=rolled(closed,width).filter(b=>b.time+width<=end);
+      if(candles.length)return {...identity,candles,coverage:'partial',reason:'archiveEnd',asOf:candles.at(-1).time+width-1};
+    }
+    const candles=interval==='1d'?await currentDays(state):rolled(state.candles,width);
+    return {...identity,candles:candles.filter(b=>b.time>=yearStart),coverage:'partial',reason:'limited',asOf:state.asOf};
+  }
+}
+
+
+const minute=intervalMs['1m'];
+const minuteCache=new Map();
+
+async function minuteFile(state,name) {
+  return boundedPromise(minuteCache,[state.symbol,state.sourceId,name].join('/'),28,async()=>{
+    const path='./minutes/'+state.symbol+'-'+state.sourceId+'-'+name+'.json.gz';
+    const r=await fetch(new URL(path,import.meta.url),{credentials:'omit',signal:AbortSignal.timeout(10000)});
+    if(!r.ok)throw Error('Missing minute archive');
+    const bytes=await r.arrayBuffer(),head=new Uint8Array(bytes,0,Math.min(2,bytes.byteLength));
+    const stream=new Blob([bytes]).stream();
+    const data=await new Response(head[0]===31&&head[1]===139 ? stream.pipeThrough(new DecompressionStream('gzip')) : stream).json();
+    if(data.interval!=='1m' || data.market!=='perpetual' || data.symbol!==state.symbol || data.sourceId!==state.sourceId)throw Error('Minute archive identity mismatch');
+    return barsFrom(data.rows,minute);
+  });
+}
+
+async function latestMinutes(state) {
+  const end=state.asOf;
+  // Refresh the open 1m candle at most every 5s. Cached responses retain trade times.
+  const key=['live',state.symbol,state.sourceId,Math.floor(end/5000)].join('/');
+  return boundedPromise(minuteCache,key,28,async()=>{
+    if(state.status==='live') {
+      try {
+        const candles=await nativeBars(state,'1m',null,end,180);
+        if(candles.at(-1).time<=end && end-candles.at(-1).time<=minute+12000)return candles;
+      } catch { /* A same-venue saved capture is an explicitly dated fallback. */ }
+    }
+    const saved=await minuteFile(state,'recent');
+    return saved.filter(b=>b.time<=end).slice(-180);
+  });
+}
+
+async function minuteDay(state,selected,signal) {
+  const effective=Math.floor(state.asOf/minute)*minute;
+  const last=new Date(effective).toISOString().slice(0,10);
+  const date=selected || last;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || date<'2026-01-01' || date>last)throw Error('Minute date outside verified period');
+  const start=Date.parse(date+'T00:00:00Z'),end=Math.min(start+day,effective+minute);
+  const closed=end===start+day && end<=state.asOf;
+  const key=[state.symbol,state.sourceId,'day',start,closed?'closed':Math.floor(state.asOf/8000)].join('/');
+  async function download() {
+    const rows=[];
+    for(let cursor=start;cursor<end;) {
+      const stop=Math.min(end,cursor+1000*minute);
+      rows.push(...await nativeBars(state,'1m',cursor,Math.min(stop-1,state.asOf),(stop-cursor)/minute));
+      cursor=stop;
+    }
+    if(rows.length!==(end-start)/minute || rows.some((b,i)=>b.time!==start+i*minute))throw Error('Incomplete minute day');
+    return rows;
+  }
+  let candles=[];
+  if(date==='2026-01-01' || date===last){
+    try{
+      const bundle=await minuteFile(state,date==='2026-01-01'?'start':'recent');
+      candles=bundle.filter(b=>b.time>=start && b.time<end);
+    }catch{}
+  }
+  if(!candles.length || candles[0].time!==start || candles.at(-1).time+minute<end ||
+     (!closed && state.status==='live')) {
+    try {candles=await boundedPromise(minuteCache,key,28,download);}
+    catch(error){if(!candles.length)throw error;}
+  }
+  signal?.throwIfAborted();
+  return {symbol:state.symbol,sourceId:state.sourceId,source:venueNames[state.sourceId],candles,interval:'1m',
+    coverage:'day',dateRange:{first:'2026-01-01',last,selected:date},asOf:Math.min(state.asOf,candles.at(-1).time+minute-1)};
 }

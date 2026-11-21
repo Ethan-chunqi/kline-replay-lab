@@ -1,16 +1,21 @@
 name: Refresh Bulls and Bears market data
 on:
   schedule:
-    - cron: '7,22,37,52 1-7 * * 1-5'
+    - cron: '7,22,37,52 0-7 * * 1-5'
     - cron: '7,22,37,52 13-22 * * 1-5'
+    - cron: '44 7 * * 1-5'
+    - cron: '44 22 * * 1-5'
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - '.github/workflows/bulls-and-bears-quotes.yml'
       - 'bulls-and-bears/scripts/update_equities.py'
+      - 'bulls-and-bears/scripts/update_equity_year.py'
+      - 'bulls-and-bears/scripts/korea.py'
       - 'bulls-and-bears/equities/catalog.js'
       - 'bulls-and-bears/scripts/update_index_futures.py'
+      - 'bulls-and-bears/scripts/build_future_year.py'
 permissions:
   contents: write
 concurrency:
@@ -34,17 +39,31 @@ jobs:
         run: |
           region=()
           case "${{ github.event.schedule }}" in
-            *' 1-7 '*) region=(--region cn) ;;
-            *' 13-22 '*) region=(--region us) ;;
+            *' 0-7 '*|'44 7 '*) region=(--region asia) ;;
+            *' 13-22 '*|'44 22 '*) region=(--region us) ;;
           esac
           python3 site/bulls-and-bears/scripts/update_equities.py --output latest/quotes --incremental "${region[@]}"
+      - name: Extend equity candle archives after the close
+        if: (success() || failure()) && (github.event_name != 'schedule' || startsWith(github.event.schedule, '44 '))
+        shell: bash
+        run: |
+          region=()
+          case "${{ github.event.schedule }}" in
+            '44 7 '*) region=(--region asia) ;;
+            '44 22 '*) region=(--region us) ;;
+          esac
+          python3 site/bulls-and-bears/scripts/update_equity_year.py --snapshots latest/quotes --output latest/quotes/year "${region[@]}"
       - name: Refresh CFFEX index futures
-        if: (success() || failure()) && github.event.schedule != '7,22,37,52 13-22 * * 1-5'
+        id: cffex
+        if: (success() || failure()) && github.event.schedule != '7,22,37,52 13-22 * * 1-5' && github.event.schedule != '44 22 * * 1-5'
         shell: bash
         run: |
           if [ -f site/bulls-and-bears/scripts/update_index_futures.py ]; then
             python3 site/bulls-and-bears/scripts/update_index_futures.py --output latest/quotes/futures
           fi
+      - name: Extend verified CFFEX delivery-month archives after the close
+        if: (success() || failure()) && steps.cffex.outcome == 'success' && (github.event_name == 'workflow_dispatch' || github.event.schedule == '44 7 * * 1-5')
+        run: python3 site/bulls-and-bears/scripts/build_future_year.py --snapshots latest/quotes/futures/data --output latest/quotes/year/futures
       - name: Publish verified symbol files
         if: success() || failure()
         working-directory: latest

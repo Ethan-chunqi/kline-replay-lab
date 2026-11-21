@@ -3,7 +3,7 @@ export { futureCatalog };
 
 const localRoot = new URL('./',import.meta.url);
 const products = new Map(futureCatalog.map(p => [p.symbol,p]));
-const frames = new Map([['15m',15],['30m',30],['1h',60],['1d',1440]]);
+const frames = new Map([['1m',1],['15m',15],['30m',30],['1h',60],['1d',1440]]);
 const cache = new Map();
 const minute = 60000;
 const hour = 60*minute;
@@ -23,7 +23,7 @@ function valid(raw,p) {
     raw.high?.price>0 && (!raw.low || raw.low.price>0) && validRows(raw.intraday) && validRows(raw.days);
 }
 function aggregate(a,count) {
-  if (count===15 || count===1440) return a.map(candle);
+  if (count===1 || count===15 || count===1440) return a.map(candle);
   const result=[];
   for (const r of a) {
     const b=candle(r),open=midnight(b.time);
@@ -85,10 +85,11 @@ function compose(p,raw,frame) {
     marginAsOf:raw?.marginAsOf??null,marginSourceUrl:raw?.marginSourceUrl||'',quoteUrl:raw?.quoteUrl||'',
     expiryDate:raw?.expiryDate||'',listingDate:raw?.listingDate||'',mainSourceUrl:raw?.mainSourceUrl||'',
     officialSourceUrl:raw?.officialSourceUrl||'',officialCloseVerified:!!raw?.officialCloseVerified,
-    volume:raw?.volume??null,openInterest:raw?.openInterest??null,barSource:raw?.barSource||'',dailySource:raw?.dailySource||'',
+    executionConfirmedAt:raw?.executionConfirmedAt,sessionEnd:raw?.tradeDay ? raw.tradeDay+15*hour : null,
+    volume:raw?.volume??null,openInterest:raw?.openInterest??null,barSource:frame==='1m'?'新浪期货':raw?.barSource||'',dailySource:raw?.dailySource||'',
     session:state,sessionLabel:({closed:'已收盘',open:'盘中 · 延时报价',break:'午间休市',unknown:'历史报价 · 待更新'})[state],
     high:raw?.high??null,low:raw?.low??null,cycle,historyStart:raw?.historyStart??null,
-    candles:raw?aggregate(frame==='1d'?raw.days:raw.intraday,frames.get(frame)):[],
+    candles:raw?aggregate(frame==='1m'?(validRows(raw.minuteBars)?raw.minuteBars:[]):frame==='1d'?raw.days:raw.intraday,frames.get(frame)):[],
     sessionCandles:raw?raw.intraday.filter(r=>r[0]*1000>=raw.tradeDay).map(candle):[]};
 }
 async function quoteTick(raw,signal) {
@@ -129,18 +130,22 @@ export function startIndexFutureFeed(onUpdate,symbol,frame='15m') {
   if (!product || !frames.has(frame))throw new RangeError('不支持的股指期货或周期');
   const controller=new AbortController(), signal=controller.signal;
   let raw=cache.get(symbol),busy=false,lastSession=session(raw);
-  function accept(next) {
+  function accept(next,online=false) {
     if (signal.aborted || !valid(next,product))return;
-    if (raw && (next.asOf<raw.asOf || (next.asOf===raw.asOf && next.generatedAt<=raw.generatedAt)))return;
-    raw=next;cache.set(symbol,raw);lastSession=session(raw);onUpdate(compose(product,raw,frame));
+    if(raw?.contract===next.contract && !validRows(raw.minuteBars) && validRows(next.minuteBars) && raw.asOf>=next.asOf){
+      raw={...raw,minuteBars:next.minuteBars};cache.set(symbol,raw);onUpdate(compose(product,raw,frame));
+    }
+    if (raw && (next.asOf<raw.asOf || (next.asOf===raw.asOf && next.generatedAt<=raw.generatedAt &&
+        (!online || next.generatedAt<raw.generatedAt || (raw.executionConfirmedAt && Date.now()-raw.executionConfirmedAt<30000)))))return;
+    raw={...next,executionConfirmedAt:online?Date.now():null};cache.set(symbol,raw);lastSession=session(raw);onUpdate(compose(product,raw,frame));
   }
   async function refresh() {
     if (busy || signal.aborted)return;
     busy=true;
     try {
       const roots=raw?[remote()]:[localRoot,remote()];
-      await Promise.allSettled(roots.map(async root=>accept(await get(new URL('data/'+symbol+'.json',root),signal))));
-      if (raw && !signal.aborted) {try {const q=await quoteTick(raw,signal);if(q)accept(q);}catch{}}
+      await Promise.allSettled(roots.map(async root=>accept(await get(new URL('data/'+symbol+'.json',root),signal),root.href!==localRoot.href)));
+      if (raw && !signal.aborted) {try {const q=await quoteTick(raw,signal);if(q)accept(q,true);}catch{}}
       if (signal.aborted)return;
       if (!raw)onUpdate({...compose(product,null,frame),status:'offline',error:'暂时无法取得股指期货报价'});
       else if (session(raw)!==lastSession){lastSession=session(raw);onUpdate(compose(product,raw,frame));}
@@ -163,7 +168,7 @@ export async function loadFutureWindow(symbol,frame,pointTime,signal) {
     }
   }
   if (!raw || signal?.aborted)return [];
-  const rows=aggregate(frame==='1d'?raw.days:raw.intraday,frames.get(frame));
+  const rows=aggregate(frame==='1m'?(validRows(raw.minuteBars)?raw.minuteBars:[]):frame==='1d'?raw.days:raw.intraday,frames.get(frame));
   const idx=frame==='1d'?rows.findIndex(r=>cnDate(r.time)===cnDate(pointTime)):
     rows.findIndex(r=>r.time<=pointTime && r.time+frames.get(frame)*minute>pointTime);
   if (idx<0)return [];

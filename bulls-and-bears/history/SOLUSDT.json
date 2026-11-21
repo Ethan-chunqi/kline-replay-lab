@@ -20,6 +20,24 @@
         "precision": "minute",
         "precisionMs": 60000,
         "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=SOLUSDT&interval=1m&startTime=1780722120000&endTime=1780722179999&limit=1000"
+      },
+      "fixedLow": {
+        "asOf": 1795277699999,
+        "high": {
+          "price": 295.6,
+          "time": 1737285300000,
+          "precision": "minute",
+          "precisionMs": 60000,
+          "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=SOLUSDT&interval=1m&startTime=1737285300000&endTime=1737285359999&limit=1000"
+        },
+        "low": {
+          "price": 70.07,
+          "time": 1795277280000,
+          "precisionMs": 60000,
+          "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=SOLUSDT&interval=1m&startTime=1795276800000&endTime=1795277699999&limit=1000"
+        },
+        "historyStart": 1795276800000,
+        "highContinuationEvidence": "https://fapi.binance.com/fapi/v1/klines?symbol=SOLUSDT&interval=15m&startTime=1795219200000&endTime=1795277699999&limit=1000"
       }
     },
     "bybit-linear": {
@@ -39,6 +57,24 @@
         "precision": "minute",
         "precisionMs": 60000,
         "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=SOLUSDT&interval=1&start=1780722120000&end=1780722179999&limit=1000"
+      },
+      "fixedLow": {
+        "asOf": 1795277699999,
+        "high": {
+          "price": 295.6,
+          "time": 1737285300000,
+          "precision": "minute",
+          "precisionMs": 60000,
+          "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=SOLUSDT&interval=1&start=1737285300000&end=1737285359999&limit=1000"
+        },
+        "low": {
+          "price": 70.06,
+          "time": 1795277280000,
+          "precisionMs": 60000,
+          "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=SOLUSDT&interval=1&start=1795276800000&end=1795277699999&limit=1000"
+        },
+        "historyStart": 1795276800000,
+        "highContinuationEvidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=SOLUSDT&interval=15&start=1795219200000&end=1795277699999&limit=1000"
       }
     }
   },

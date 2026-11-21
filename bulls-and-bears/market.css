@@ -138,3 +138,16 @@
   .nav-meta .connection {max-width:80px;gap:4px;font-size:.68rem;overflow-wrap:anywhere;}
   .market-tabs button { min-width:0;white-space:normal;overflow-wrap:anywhere;padding-inline:3px;line-height:1.2; }
 }
+
+.chart-foot {flex-wrap:wrap;gap:7px;}
+.chart-actions {flex-wrap:wrap;margin-inline-start:auto;}
+.chart-actions .year-range {padding:4px 7px;border:1px solid var(--line-light);border-radius:4px;color:var(--gold);font-weight:600;}
+.chart-actions .year-range[aria-pressed=true] {border-color:var(--chart-accent);background:var(--selected);color:var(--selected-text);}
+.year-context {display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-top:8px;padding:8px 10px;border-top:1px solid var(--line);color:var(--soft);font-size:.79rem;line-height:1.5;}
+.year-controls,.year-controls label {display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.year-controls button,.year-controls input {border:1px solid var(--line-light);border-radius:4px;padding:3px 6px;background:var(--panel-low);color:var(--text);font-size:.8rem;}
+.year-controls input {color-scheme:dark;}
+[data-theme=light] .year-controls input {color-scheme:light;}
+
+.chart-legends .legend .gold-bar {width:8px;height:12px;border:1px solid #ffe325;border-radius:2px;background:#fff28a;box-shadow:0 0 6px #ffde3ca8;}
+[data-theme=light] .chart-legends .legend .gold-bar {border-color:#795100;background:#ffe32b;box-shadow:0 0 5px #ffbc409c;}

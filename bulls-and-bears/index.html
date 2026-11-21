@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#101217">
-  <meta name="description" content="刘鲨鱼的 Bulls &amp; Bears 多市场行情终端，查看加密合约、美股、ETF 和 A 股指数 K 线、周期高低点和模拟持仓。">
+  <meta name="description" content="刘鲨鱼的 Bulls &amp; Bears 多市场行情终端，查看加密合约、美股、中国 A 股与韩国股市 K 线，对比持仓收益、银行利息和生活购买力。">
   <meta property="og:site_name" content="刘鲨鱼">
   <meta property="og:title" content="刘鲨鱼 · Bulls &amp; Bears">
-  <meta property="og:description" content="加密、美股与 A 股指数的 K 线、周期高低点与模拟持仓。">
+  <meta property="og:description" content="加密、美股、中国 A 股与韩股行情。对比做多、做空与银行存款收益，在交易时段模拟开单。">
   <meta property="og:image" content="https://ethan-chunqi.github.io/kline-replay-lab/bulls-and-bears/brand/liushayu-cover.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:creator" content="@LiuShaYu2026">
@@ -15,8 +15,18 @@
   <link rel="icon" href="./brand/liushayu-avatar.jpg" type="image/jpeg">
   <link rel="apple-touch-icon" href="./brand/liushayu-avatar.jpg">
   <link rel="stylesheet" href="./style.css">
-  <link rel="stylesheet" href="./market.css?v=direction-colors">
-  <script>try {document.documentElement.dataset.theme = localStorage.getItem('bulls-bears-theme') === 'light' ? 'light' : 'dark'} catch {}</script>
+  <link rel="stylesheet" href="./market.css?v=20261122-market-v3">
+  <link rel="stylesheet" href="./position-extras.css?v=20261122-market-v3">
+  <link rel="stylesheet" href="./market-art.css?v=20261122-market-v3">
+  <link rel="stylesheet" href="./paper-trading.css?v=20261122-market-v3">
+  <script>
+    (() => {
+      let saved;
+      try { saved = localStorage.getItem('bulls-bears-theme'); } catch {}
+      document.documentElement.dataset.theme = ['light','dark'].includes(saved) ? saved :
+        (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    })();
+  </script>
 </head>
 <body>
   <a class="skip" href="#main" data-i18n="跳至行情">跳至行情</a>
@@ -40,7 +50,7 @@
         <a href="#calculator" class="nav-link" id="nav-calc"><svg><use href="#i-calc"/></svg><span data-i18n="positions">你的持仓</span></a>
       </nav>
       <div class="nav-meta">
-        <button type="button" class="theme-btn" id="theme" aria-label="浅色" title="浅色"><span aria-hidden="true">☀</span></button>
+        <label class="theme-btn theme-picker"><span id="theme-symbol" aria-hidden="true">◐</span><select id="theme" aria-label="主题" data-i18n-aria="主题"><option value="system" data-i18n="跟随系统">跟随系统</option><option value="light" data-i18n="浅色">浅色</option><option value="dark" data-i18n="深色">深色</option></select></label>
         <select id="language" class="small-select" aria-label="语言" data-i18n-aria="语言"><option value="zh">简体中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ru">Русский</option><option value="ko">한국어</option></select>
         <div class="connection" id="connection" data-status="loading" role="status"><span class="status-dot"></span><span id="status-label">连接中</span></div>
       </div>
@@ -52,7 +62,8 @@
       <div class="market-tabs" role="group" aria-label="选择市场" data-i18n-aria="选择市场">
         <button type="button" data-region="crypto" aria-pressed="true" data-i18n="加密货币">加密货币</button>
         <button type="button" data-region="us" aria-pressed="false" data-i18n="美股">美股</button>
-        <button type="button" data-region="cn" aria-pressed="false" data-i18n="A 股">A 股</button>
+        <button type="button" data-region="cn" aria-pressed="false" data-i18n="cnMarket">中国 A 股</button>
+        <button type="button" data-region="kr" aria-pressed="false" data-i18n="krTab">韩国股市</button>
       </div>
       <div class="asset-switcher">
         <div id="instruments" class="contracts" role="group" data-i18n-aria="热门标的" aria-label="热门标的"></div>
@@ -64,6 +75,7 @@
         <div class="asset-line"><img class="hero-coin" id="hero-coin" src="./coins/BTC.png" alt=""><h1 id="asset-name">BTC<span>USDT</span></h1><span class="pair" id="asset-kind">永续</span></div>
         <div class="price-line"><strong id="price">—</strong><span id="quote-unit">USDT</span></div>
         <div class="change-line"><span class="change-pill" id="change24">—</span><span id="change-name">24 小时涨跌幅</span></div>
+        <div class="change-line" id="stock-details" hidden></div>
       </div>
       <dl class="day-stats">
         <div><dt id="day-high-label">24 小时最高</dt><dd id="day-high">—</dd></div>
@@ -82,6 +94,7 @@
         <div class="card-head chart-head">
           <div class="title-line"><span class="heading-icon"><svg><use href="#i-candle"/></svg></span><h2 id="chart-title" data-i18n="K 线走势">K 线走势</h2></div>
           <div class="segmented intervals" role="group" aria-label="K 线周期" data-i18n-aria="K 线周期">
+            <button type="button" data-interval="1m" aria-pressed="false" data-i18n="1 分钟">1 分钟</button>
             <button type="button" data-interval="15m" aria-pressed="true" data-i18n="15 分钟">15 分钟</button>
             <button type="button" data-interval="30m" aria-pressed="false" data-i18n="30 分钟">30 分钟</button>
             <button type="button" data-interval="1h" aria-pressed="false" data-i18n="1 小时">1 小时</button>
@@ -92,7 +105,12 @@
         <div class="chart-area"><div id="chart"></div><span id="chart-empty"></span></div>
         <div class="chart-foot">
           <div class="chart-legends"><span id="bar-source" class="muted" hidden></span><span class="legend"><i></i><span data-i18n="成交量">成交量</span><span class="muted" id="volume-unit"></span></span><span class="legend"><i class="gold-bar"></i><span data-i18n="金色为周期极值">金色为周期极值</span></span></div>
-          <div class="chart-actions"><select id="view-range" class="small-select" data-i18n-aria="显示范围" aria-label="显示范围"></select><button id="reset" type="button"><svg><use href="#i-reset"/></svg><span data-i18n="重置视图">重置视图</span></button></div>
+          <div class="chart-actions"><button type="button" class="year-range" id="year-range" aria-pressed="false" data-i18n="since2026">2026 年以来</button><select id="view-range" class="small-select" data-i18n-aria="显示范围" aria-label="显示范围"></select><button id="reset" type="button"><svg><use href="#i-reset"/></svg><span data-i18n="重置视图">重置视图</span></button></div>
+        </div>
+        <div class="year-context" id="year-context" hidden>
+          <span id="year-note" role="status"></span>
+          <div class="year-controls"><label id="year-jump"><span data-i18n="jumpDate">定位日期</span> <input type="date" id="year-date"></label>
+          <button type="button" id="year-daily" data-i18n="showDailyHistory" hidden>查看日线历史</button><button type="button" id="year-retry" data-i18n="retryYear" hidden>重新加载</button></div>
         </div>
         <div class="chart-context" id="chart-context" hidden><span id="context-label"></span><button type="button" id="back-latest" data-i18n="返回最新">返回最新</button></div>
       </section>
@@ -119,6 +137,7 @@
         </div></div>
       <div id="position-panel"></div>
     </section>
+    <section class="card paper-panel" id="paper-trading" aria-label="模拟开单" data-i18n-aria="paperTitle"></section>
     <aside class="signature">
       <div class="signature-inner">
         <p class="signature-name">刘鲨鱼 <span>AI × Crypto</span></p>
@@ -129,8 +148,8 @@
         </div>
       </div>
     </aside>
-    <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a></span><span id="updated"></span></footer>
+    <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a><span class="divider">/</span><a href="./brand/SOURCES.md" target="_blank" rel="noopener" data-i18n="artCredit">图片来源</a></span><span id="updated"></span></footer>
   </main>
-  <script type="module" src="./app.js?v=flex-capital"></script>
+  <script type="module" src="./app.js?v=20261122-market-v3"></script>
 </body>
 </html>

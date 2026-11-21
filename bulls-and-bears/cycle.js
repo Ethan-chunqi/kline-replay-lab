@@ -1,9 +1,12 @@
+import {perpetualSources,bitgetKlines,bitgetPath} from './perpetuals.js?v=20261122-market-v3';
+import {createSolCycle} from './sol-cycle.js?v=20261122-market-v3';
+
 // Exchange-specific USDT perpetual all-time highs and subsequent lows.
 // Bars use [open, nextOpen), while an anchor's asOf includes its last millisecond.
 const MIN = 60_000;
 const QUARTER = 15 * MIN;
 const DAY = 24 * 60 * MIN;
-const symbols = new Set(['BTCUSDT', 'BNBUSDT', 'HYPEUSDT', 'SOLUSDT', 'ZECUSDT']);
+
 const venues = {
   'binance-usdm': ['https://fapi.binance.com'],
   'bybit-linear': ['https://api.bybit.com', 'https://api.bytick.com'],
@@ -60,6 +63,11 @@ async function requestBars(contract, width, start, end, asOf) {
   const { sourceId: id, symbol } = contract;
   const until = Math.min(end - 1, asOf);
   const size = (end - start) / width;
+  if(id==='bitget-usdt') {
+    const interval=({[DAY]:'1d',[QUARTER]:'15m',[MIN]:'1m'})[width];
+    const raw=await bitgetKlines(symbol,interval,start,until,size,json);
+    return contiguous(raw.map(r=>({time:+r[0],width,high:+r[2],low:+r[3],close:+r[4]})),start,end,width);
+  }
   const query = id === 'binance-usdm'
     ? '/fapi/v1/klines?symbol=' + symbol + '&interval=' + ({ [DAY]: '1d', [QUARTER]: '15m', [MIN]: '1m' }[width]) +
       '&startTime=' + start + '&endTime=' + until + '&limit=' + size
@@ -93,6 +101,11 @@ async function resolveMinute(contract, bar, asOf, afterLow) {
       trades.push(...page);
     }
     trades = trades.map(r => ({ time: +r.T, price: +r.p }));
+  } else if(id==='bitget-usdt') {
+    const raw=await json(bitgetPath('fills',symbol,{limit:100}));
+    if(raw.code!=='00000' || !Array.isArray(raw.data))throw Error('Missing trade order');
+    trades=raw.data.filter(r=>r.symbol===symbol).reverse().map(r=>({time:+r.ts,price:+r.price}));
+    if(!trades.length || trades[0].time>bar.time || trades.at(-1).time<stop-2000)throw Error('该分钟的成交顺序尚待核实');
   } else {
     const rows = await fromVenue(id, '/v5/market/recent-trade?category=linear&symbol=' + symbol + '&limit=1000', r => {
       if (r.retCode !== 0 || r.result.category !== 'linear') throw Error();
@@ -201,9 +214,11 @@ export function createCycleTracker(onUpdate) {
     return { high, low, asOf };
   }
 
+  const solCycle = createSolCycle({bridge,range,refinedPoint,contiguous});
+
   async function calculate(state) {
     const { sourceId, symbol, market, candles, asOf } = state;
-    if (!symbols.has(symbol) || !venues[sourceId] || market !== 'perpetual') throw new Error('合约标识不符');
+    if (!perpetualSources[symbol]?.includes(sourceId) || market !== 'perpetual') throw new Error('合约标识不符');
     const contract = { sourceId, symbol };
     if (!anchorFiles.has(symbol)) {
       const url = new URL(symbol === 'BTCUSDT' ? './anchors.json' : './history/' + symbol + '.json', import.meta.url);
@@ -215,6 +230,7 @@ export function createCycleTracker(onUpdate) {
     }
     const anchor = (await anchorFiles.get(symbol))?.[sourceId];
     if (!validBase(anchor) || !Number.isSafeInteger(asOf) || asOf < anchor.asOf) throw new Error('行情时间与历史基线尚未对齐');
+    if (symbol === 'SOLUSDT') return solCycle(contract,anchor,state);
     const cacheKey = 'perpetual-cycle-v3/' + symbol + '/' + sourceId + '/' + anchor.asOf;
     if (!bases.has(cacheKey)) {
       let saved;
