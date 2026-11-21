@@ -1,0 +1,58 @@
+name: Refresh Bulls and Bears market data
+on:
+  schedule:
+    - cron: '7,22,37,52 1-7 * * 1-5'
+    - cron: '7,22,37,52 13-22 * * 1-5'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bulls-and-bears-quotes.yml'
+      - 'bulls-and-bears/scripts/update_equities.py'
+      - 'bulls-and-bears/equities/catalog.js'
+      - 'bulls-and-bears/scripts/update_index_futures.py'
+permissions:
+  contents: write
+concurrency:
+  group: bulls-and-bears-market-data
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: site
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: market-data
+          path: latest
+      - name: Refresh published market snapshots
+        shell: bash
+        run: |
+          region=()
+          case "${{ github.event.schedule }}" in
+            *' 1-7 '*) region=(--region cn) ;;
+            *' 13-22 '*) region=(--region us) ;;
+          esac
+          python3 site/bulls-and-bears/scripts/update_equities.py --output latest/quotes --incremental "${region[@]}"
+      - name: Refresh CFFEX index futures
+        if: (success() || failure()) && github.event.schedule != '7,22,37,52 13-22 * * 1-5'
+        shell: bash
+        run: |
+          if [ -f site/bulls-and-bears/scripts/update_index_futures.py ]; then
+            python3 site/bulls-and-bears/scripts/update_index_futures.py --output latest/quotes/futures
+          fi
+      - name: Publish verified symbol files
+        if: success() || failure()
+        working-directory: latest
+        run: |
+          git add quotes/
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m "Refresh market quotes"
+            git push origin HEAD:market-data
+          fi
