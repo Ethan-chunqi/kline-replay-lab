@@ -28,7 +28,12 @@
 .asset-switcher { min-width:0;gap:10px;padding-left:16px;border-left:1px solid var(--line);flex:1; }
 .contracts { margin:0;gap:3px; }
 .contract { padding-inline:9px; }
-.asset-select { margin-left:auto;max-width:300px;min-width:140px; }
+.asset-select {
+  margin-left:auto;max-width:300px;min-width:140px;cursor:pointer;
+  border-color:var(--chart-accent);color:var(--text);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='m2 2 4 4 4-4' fill='none' stroke='%23d5a500' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.asset-select:focus-visible { outline:2px solid var(--chart-accent);outline-offset:2px; }
 #asset-name { flex-wrap:wrap; }
 #asset-name.equity-heading { column-gap:9px; }
 #asset-name.equity-heading span { font:500 .83rem/1.3 var(--body);color:var(--muted);letter-spacing:0; }
@@ -44,7 +49,40 @@
 .locate:disabled { opacity:.45;cursor:default; }
 .extreme-name h3 { color:var(--text); }
 .calc-grid { grid-template-columns:minmax(210px,.8fr) repeat(2,minmax(0,1.12fr));align-items:stretch; }
-.result { justify-content:flex-start; }
+.calculator {
+  --side-red:#ff637a; --side-red-bg:#3b1c27;
+  --side-green:#28d996; --side-green-bg:#103528;
+  --side-badge-ink:#101619; --side-muted:#c1c8cd;
+  --profit-ink:#4ae5a6; --loss-ink:#ff8899;
+}
+[data-theme=light] .calculator {
+  --side-red:#c33350; --side-red-bg:#ffe2e7;
+  --side-green:#087750; --side-green-bg:#d6f4e3;
+  --side-badge-ink:#fff; --side-muted:#4e5965;
+  --profit-ink:#006442; --loss-ink:#a8233c;
+}
+.result-short, [data-direction-colors=reversed] .result-long {
+  --side-accent:var(--side-red); --side-fill:var(--side-red-bg);
+}
+.result-long, [data-direction-colors=reversed] .result-short {
+  --side-accent:var(--side-green); --side-fill:var(--side-green-bg);
+}
+.calculator .card-head { flex-wrap:wrap; }
+.direction-tools { display:flex;align-items:center;gap:9px;margin-inline-start:auto;max-width:100%; }
+.direction-toggle {
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:5px 10px;
+  border:1px solid var(--line-light);border-radius:5px;background:var(--panel-low);color:var(--text);
+  min-height:32px;line-height:1.3;font-size:.8rem;font-weight:550;
+}
+.direction-toggle svg { width:15px;height:15px;flex:none; }
+.direction-toggle:hover { border-color:var(--chart-accent);color:var(--gold); }
+.direction-toggle[aria-pressed=true] { color:var(--selected-text);background:var(--selected);border-color:var(--chart-accent); }
+.result {
+  justify-content:flex-start;background:var(--side-fill);border-color:var(--side-accent);
+  border-top-width:4px;--muted:var(--side-muted);--up:var(--profit-ink);--down:var(--loss-ink);
+}
+.calculator .result .position { color:var(--side-badge-ink);background:var(--side-accent); }
+.result .position-table { border-color:color-mix(in srgb,var(--side-accent) 33%,var(--side-fill)); }
 .position-field { min-width:0; }
 .position-roe { color:var(--muted);font-size:.78rem;margin:0 0 10px; }
 .position-roe b { margin-left:4px;font:600 .87rem var(--number); }
@@ -65,8 +103,8 @@
 .referral-label { font-size:.73rem;color:#c2cdd9; }
 [data-theme=light] .contract:hover,[data-theme=light] .segmented button:not([aria-pressed=true]):hover { background:#edf0f4;color:var(--text); }
 [data-theme=light] .contract[aria-pressed=true],[data-theme=light] .pair { color:var(--selected-text);background:#fff3cb;border-color:#dfca8c; }
-[data-theme=light] .change-pill[data-tone=positive],[data-theme=light] .result-long .position {color:#087a55;background:#dff5e9;}
-[data-theme=light] .change-pill[data-tone=negative],[data-theme=light] .position {color:#ae3046;background:#fce7ea;}
+[data-theme=light] .change-pill[data-tone=positive] {color:#087a55;background:#dff5e9;}
+[data-theme=light] .change-pill[data-tone=negative] {color:#ae3046;background:#fce7ea;}
 [data-theme=light] .extreme-box { --tint:#fff6f6;--icon:#fce0e3;--edge:#efdadc;--rule:#f0dfe1; }
 [data-theme=light] .low-box {--tint:#eff9f3;--icon:#d6efdf;--edge:#d5e7da;--rule:#d9eadd;}
 [data-theme=light] .input-wrap,[data-theme=light] .calc-controls select {background-color:var(--control);border-color:var(--line-light);}

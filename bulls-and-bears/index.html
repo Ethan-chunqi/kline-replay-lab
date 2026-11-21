@@ -15,7 +15,7 @@
   <link rel="icon" href="./brand/liushayu-avatar.jpg" type="image/jpeg">
   <link rel="apple-touch-icon" href="./brand/liushayu-avatar.jpg">
   <link rel="stylesheet" href="./style.css">
-  <link rel="stylesheet" href="./market.css">
+  <link rel="stylesheet" href="./market.css?v=direction-colors">
   <script>try {document.documentElement.dataset.theme = localStorage.getItem('bulls-bears-theme') === 'light' ? 'light' : 'dark'} catch {}</script>
 </head>
 <body>
@@ -37,7 +37,7 @@
       <a class="brand" href="#market" aria-label="刘鲨鱼 Bulls &amp; Bears"><img class="brand-mark" src="./brand/liushayu-avatar.jpg" width="36" height="36" alt=""><span>刘鲨鱼<small>Bulls &amp; Bears</small></span></a>
       <nav aria-label="主导航" data-i18n-aria="主导航">
         <a href="#market" class="nav-link active" id="nav-market"><svg><use href="#i-market"/></svg><span data-i18n="行情总览">行情总览</span></a>
-        <a href="#calculator" class="nav-link" id="nav-calc"><svg><use href="#i-calc"/></svg><span data-i18n="模拟持仓">模拟持仓</span></a>
+        <a href="#calculator" class="nav-link" id="nav-calc"><svg><use href="#i-calc"/></svg><span data-i18n="positions">你的持仓</span></a>
       </nav>
       <div class="nav-meta">
         <button type="button" class="theme-btn" id="theme" aria-label="浅色" title="浅色"><span aria-hidden="true">☀</span></button>
@@ -112,8 +112,11 @@
         </article>
       </section>
     </div>
-    <section class="card calculator" id="calculator" aria-labelledby="calc-title">
-      <div class="card-head"><div class="title-line"><span class="heading-icon"><svg><use href="#i-calc"/></svg></span><h2 id="calc-title" data-i18n="模拟持仓">模拟持仓</h2></div><span class="subtle-tag" id="position-unit">USDT</span></div>
+    <section class="card calculator" id="calculator" aria-labelledby="calc-title" data-direction-colors="default">
+      <div class="card-head"><div class="title-line"><span class="heading-icon"><svg><use href="#i-calc"/></svg></span><h2 id="calc-title" data-i18n="positions">你的持仓</h2></div><div class="direction-tools">
+          <button type="button" id="direction-toggle" class="direction-toggle" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h15l-4-4m5 12H5l4 4"/></svg><span data-i18n="swapDirectionColors">互换多空颜色</span></button>
+          <span class="subtle-tag" id="position-unit">USDT</span>
+        </div></div>
       <div id="position-panel"></div>
     </section>
     <aside class="signature">
@@ -122,12 +125,12 @@
         <p class="signature-quote"><span data-i18n="等一个机会，迎来自己的爆发">等一个机会，迎来自己的爆发</span> 📈</p>
         <div class="signature-links">
           <a href="https://x.com/LiuShaYu2026" target="_blank" rel="me noopener noreferrer"><svg aria-hidden="true"><use href="#i-x"/></svg><span data-i18n="关注我的 X">关注我的 X</span></a>
-          <a class="binance-link" id="binance-link" href="https://www.bsmkweb.cc/register?ref=JJUKNB9R" target="_blank" rel="sponsored noopener noreferrer"><span data-i18n="一键注册币安">一键注册币安</span></a><span class="referral-label"><span data-i18n="参与经济周期">参与经济周期</span> · <span data-i18n="推广链接">推广链接</span></span>
+          <a class="binance-link" id="binance-link" href="https://www.bsmkweb.cc/register?ref=JJUKNB9R" target="_blank" rel="sponsored noopener noreferrer"><span data-i18n="一键注册币安">一键注册币安</span></a><span class="referral-label" data-i18n="参与经济周期">参与经济周期</span>
         </div>
       </div>
     </aside>
     <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a></span><span id="updated"></span></footer>
   </main>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=direction-colors"></script>
 </body>
 </html>

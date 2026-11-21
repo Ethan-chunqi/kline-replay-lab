@@ -3,9 +3,9 @@ import {createCycleTracker} from './cycle.js';
 import {createChartView} from './chart.js';
 import {getCryptoBars} from './crypto-intervals.js';
 import {equityCatalog, startEquityFeed, loadEquityWindow} from './equities/feed.js';
-import {createPositions} from './positions.js';
+import {createPositions} from './positions.js?v=two-lots';
 import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js';
-import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js';
+import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=direction-colors';
 import {percent} from './metrics.js';
 
 window.EQUITY_DATA_URL = 'https://raw.githubusercontent.com/Ethan-chunqi/kline-replay-lab/market-data/quotes/';
@@ -285,6 +285,17 @@ $('asset-select').addEventListener('change',e=>openAsset(e.target.value));
 $('view-range').addEventListener('change',e=>{hours[activeInterval()]=Number(e.target.value);drawChart();chart.reset();});
 $('back-latest').addEventListener('click',()=>switchInterval(interval));
 $('reset').addEventListener('click',()=>{if(historyView || locating) switchInterval(interval);else chart.reset();});
+const directionColorKey='bulls-bears-direction-colors';
+function setDirectionColors(reversed) {
+  $('calculator').dataset.directionColors=reversed?'reversed':'default';
+  $('direction-toggle').setAttribute('aria-pressed',String(reversed));
+}
+setDirectionColors(read(directionColorKey)==='reversed');
+$('direction-toggle').addEventListener('click',()=>{
+  const reversed=$('calculator').dataset.directionColors!=='reversed';
+  setDirectionColors(reversed);
+  save(directionColorKey,$('calculator').dataset.directionColors);
+});
 $('theme').addEventListener('click',()=>{theme=theme==='light'?'dark':'light';save('bulls-bears-theme',theme);applyAppearance();drawChart();scheduleSpark();});
 $('language').addEventListener('change',e=>{lang=e.target.value;save('bulls-bears-language',lang);applyLanguage();});
 for(const a of document.querySelectorAll('nav a,.brand'))a.addEventListener('click',()=>{

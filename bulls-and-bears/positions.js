@@ -141,7 +141,7 @@ export function createPositions(host,{t}) {
   el('capital').value = '10,000';
   el('leverage').value = '10';
   el('maintenance').value = '0.5';
-  el('lots').value = '1';
+  el('lots').value = '2';
   el('lots').inputMode = 'numeric';
 
   function restoreGroup(next,lang) {
@@ -152,7 +152,7 @@ export function createPositions(host,{t}) {
     el('capital').value = num(lang,POSITIVE(+prefs?.capital) ? +prefs.capital : 10000,0,8);
     el('leverage').value = leverages.includes(+prefs?.leverage) ? String(prefs.leverage) : '10';
     el('maintenance').value = num(lang,POSITIVE(+prefs?.maintenance) ? +prefs.maintenance : 0.5,0,8);
-    el('lots').value = String(Number.isSafeInteger(prefs?.lots) && prefs.lots > 0 ? prefs.lots : 1);
+    el('lots').value = String(Number.isSafeInteger(prefs?.lots) && prefs.lots > 0 ? prefs.lots : 2);
     rateOverride = POSITIVE(prefs?.ratePercent) && prefs.ratePercent <= 100;
     officialRate = null;
     el('future-margin-rate').value = rateOverride ? num(lang,prefs.ratePercent,0,8) : '';
