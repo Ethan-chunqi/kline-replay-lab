@@ -4,15 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#101217">
-  <meta name="description" content="查看 BTC、BNB、HYPE、SOL、ZEC 的永续合约 K 线、历史高点回撤和多空模拟盈亏。">
-  <title>潮汐行情 · 永续合约终端</title>
-  <link rel="icon" href="./icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./style.css">
+  <meta name="description" content="刘鲨鱼的永续合约看板。查看 BTC、BNB、HYPE、SOL、ZEC 的实时 K 线、历史高点回撤和多空模拟盈亏。">
+  <meta property="og:site_name" content="刘鲨鱼">
+  <meta property="og:title" content="刘鲨鱼 · 永续合约终端">
+  <meta property="og:description" content="AI × Crypto。五个永续合约的实时 K 线、周期高低点与多空盈亏。">
+  <meta property="og:image" content="https://ethan-chunqi.github.io/kline-replay-lab/perp-terminal/brand/liushayu-cover.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:creator" content="@LiuShaYu2026">
+  <title>刘鲨鱼 · 永续合约终端</title>
+  <link rel="icon" href="./brand/liushayu-avatar.jpg" type="image/jpeg">
+  <link rel="apple-touch-icon" href="./brand/liushayu-avatar.jpg">
+  <link rel="stylesheet" href="./style.css?v=liushayu">
 </head>
 <body>
   <a class="skip" href="#main">跳至行情</a>
   <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 16h3l4-11 5 15 3-11 2 4h3"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M18.9 2h3.3l-7.2 8.2L23.5 22h-6.7l-5.2-6.8L5.7 22H2.4l7.7-8.8L1.9 2h6.9l4.7 6.2L18.9 2Zm-1.2 18h1.8L7.8 3.9h-2L17.7 20Z"/></symbol>
     <symbol id="i-market" viewBox="0 0 24 24"><path d="M4 4v15h16M7 14l4-5 4 3 5-7"/></symbol>
     <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7.5h7M9 12h1m4 0h1m-6 4h1m4 0h1"/></symbol>
     <symbol id="i-candle" viewBox="0 0 24 24"><path d="M5 3v5m0 7v5m7-16v8m0 5v4m7-19v4m0 7v5"/><rect x="3" y="8" width="4" height="7" rx=".6"/><rect x="10" y="12" width="4" height="5" rx=".6"/><rect x="17" y="6" width="4" height="7" rx=".6"/></symbol>
@@ -25,12 +32,15 @@
   </svg>
   <header class="topbar">
     <div class="shell nav-inner">
-      <a class="brand" href="#market" aria-label="潮汐行情首页"><span class="brand-mark"><svg><use href="#i-wave"/></svg></span><span>潮汐行情</span></a>
+      <a class="brand" href="#market" aria-label="刘鲨鱼首页"><img class="brand-mark" src="./brand/liushayu-avatar.jpg" width="36" height="36" alt=""><span>刘鲨鱼</span></a>
       <nav aria-label="主导航">
         <a href="#market" class="nav-link active" id="nav-market"><svg><use href="#i-market"/></svg>行情总览</a>
         <a href="#calculator" class="nav-link" id="nav-calc"><svg><use href="#i-calc"/></svg>收益测算</a>
       </nav>
-      <div class="connection" id="connection" data-status="loading" role="status"><span class="status-dot"></span><span id="status-label">连接中</span></div>
+      <div class="nav-meta">
+        <a class="profile-link" href="https://x.com/LiuShaYu2026" target="_blank" rel="me noopener noreferrer" aria-label="在新标签页打开刘鲨鱼的 X 主页，@LiuShaYu2026"><svg aria-hidden="true"><use href="#i-x"/></svg><span>@LiuShaYu2026</span></a>
+        <div class="connection" id="connection" data-status="loading" role="status"><span class="status-dot"></span><span id="status-label">连接中</span></div>
+      </div>
     </div>
   </header>
 
@@ -117,8 +127,14 @@
       <p class="calc-note"><svg><use href="#i-info"/></svg>按最新价估算浮动盈亏，未计手续费、资金费、滑点及强平。</p>
     </section>
 
+    <a class="signature" href="https://x.com/LiuShaYu2026" target="_blank" rel="me noopener noreferrer" aria-label="刘鲨鱼的个人签名，前往 X 主页 @LiuShaYu2026">
+      <div class="signature-inner">
+        <p class="signature-name">刘鲨鱼 <span>AI × Crypto</span></p>
+        <p class="signature-quote">等一个机会，迎来自己的爆发 <span aria-hidden="true">📈</span></p>
+      </div>
+    </a>
     <footer><span><i class="source-dot"></i><span id="foot-source">正在连接行情源</span><span class="divider">/</span>北京时间 UTC+8<span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener">图表版权</a></span><span id="updated">等待报价</span></footer>
   </main>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=liushayu"></script>
 </body>
 </html>

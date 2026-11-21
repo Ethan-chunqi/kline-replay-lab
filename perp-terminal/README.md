@@ -1,6 +1,6 @@
-# 潮汐行情 · 永续合约终端
+# 刘鲨鱼 · 永续合约终端
 
-[打开行情终端](https://ethan-chunqi.github.io/kline-replay-lab/perp-terminal/)
+[打开行情终端](https://ethan-chunqi.github.io/kline-replay-lab/perp-terminal/) · [刘鲨鱼的 X 主页](https://x.com/LiuShaYu2026)
 
 支持 BTC、BNB、HYPE、SOL、ZEC 的 USDT 永续合约。行情优先使用 Binance USDⓈ-M 的最新成交价。主源不可用时，整个页面可切换到 Bybit 对应的线性永续合约。页面底部显示当前交易所和报价时间，失去连接时会标注快照时间。
 

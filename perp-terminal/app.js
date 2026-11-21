@@ -250,7 +250,7 @@ function openContract(selected, changeUrl = true) {
   byId('asset-name').replaceChildren(document.createTextNode(code), Object.assign(document.createElement('span'), {textContent:'USDT'}));
   byId('hero-coin').src = './coins/' + code + '.png';
   byId('volume-unit').textContent = code;
-  document.title = code + 'USDT 永续 · 潮汐行情';
+  document.title = '刘鲨鱼 · ' + code + 'USDT 永续';
   for (const b of contracts) b.setAttribute('aria-pressed', String(b.dataset.symbol === selected));
   restoreBasis(symbol);
   if (changeUrl) {

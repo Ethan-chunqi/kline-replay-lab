@@ -52,14 +52,17 @@ svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; s
 .nav-inner { height: 100%; gap: clamp(28px, 4.4vw, 70px); }
 .brand { gap: 10px; font-size: 1.2rem; font-weight: 760; letter-spacing: .025em; white-space: nowrap; }
 .brand:hover { color: var(--text); }
-.brand-mark { width: 33px; height: 33px; display: grid; place-items: center; color: #181a20; background: var(--gold); border-radius: 8px; }
-.brand-mark svg { width: 25px; height: 25px; stroke-width: 2.25; }
+.brand-mark { width: 36px; height: 36px; flex: none; display: block; object-fit: cover; border-radius: 50%; border: 1px solid #5687bc; }
+.nav-meta { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+.profile-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px; color: var(--soft); min-height: 36px; white-space: nowrap; font: 525 .85rem var(--number); }
+.profile-link svg { width: 15px; height: 15px; }
+.profile-link:hover { color: #fff; }
 nav { height: 100%; gap: clamp(18px, 2.1vw, 34px); }
 .nav-link { position: relative; height: 100%; gap: 7px; color: var(--muted); font-size: .89rem; font-weight: 550; white-space: nowrap; }
 .nav-link svg { width: 16px; height: 16px; }
 .nav-link.active { color: var(--text); }
 .nav-link.active:after { content: ""; position: absolute; inset: auto 0 -1px; height: 3px; background: var(--gold); }
-.connection { margin-left: auto; gap: 8px; font-size: .83rem; color: var(--soft); white-space: nowrap; }
+.connection { gap: 8px; font-size: .83rem; color: var(--soft); white-space: nowrap; }
 .status-dot, .source-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .connection[data-status="live"] .status-dot { background: var(--up); box-shadow: 0 0 0 3px #0ecb8117; }
 .connection:is([data-status="stale"],[data-status="offline"]) .status-dot { background: var(--gold); }
@@ -177,6 +180,18 @@ main.shell { padding-top: 18px; padding-bottom: max(18px, env(safe-area-inset-bo
 .result [data-tone="negative"] { color: var(--down); }
 .calc-note { gap: 6px; margin: 11px 0 0; color: var(--muted); font-size: .76rem; align-items: flex-start; }
 .calc-note svg { margin-top: 2px; }
+.signature { display: block; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; position: relative; isolation: isolate; background: #111820; }
+.signature::before { content: ""; position: absolute; z-index: -1; inset: 0 0 0 auto; width: min(83%, 550px); background: linear-gradient(90deg, #111820 0%, rgba(17,24,32,.85) 16%, rgba(17,24,32,.2) 54%, rgba(17,24,32,.06)), url("./brand/liushayu-cover.jpg") 56% 12% / cover no-repeat; }
+.signature-inner { padding: 16px 23px; min-height: 124px; display: flex; flex-direction: column; justify-content: center; }
+.signature-name, .signature-quote { margin: 0; }
+.signature-name { color: #dce3ed; font-weight: 600; font-size: .93rem; }
+.signature-name span { margin-left: 6px; font: 550 .77rem var(--number); color: #b2c9ec; }
+.signature-quote { margin-top: 5px; font-size: 1rem; color: #f3f5f9; }
+@media (max-width: 590px) {
+  .signature-inner { min-height: 90px; padding: 12px; }
+  .signature::before { width: 89%; background-position: center, 58% 42%; background-image: linear-gradient(90deg,#111820,rgba(17,24,32,.88) 29%,rgba(17,24,32,.37) 64%,rgba(17,24,32,.12)), url("./brand/liushayu-cover.jpg"); }
+  .signature-quote { font-size: .85rem; }
+}
 footer { margin-top: 13px; gap: 5px 12px; flex-wrap: wrap; color: var(--muted); font-size: .76rem; }
 footer > span { gap: 6px; flex-wrap: wrap; }
 .source-dot { width: 5px; height: 5px; background: #697483; }
@@ -222,8 +237,10 @@ footer a { color: var(--soft); }
   .nav-link { font-size: .82rem; }
   .nav-link svg { display: none; }
   .brand { gap: 7px; font-size: 1.03rem; }
-  .brand-mark { width: 28px; height: 28px; border-radius: 6px; }
-  .brand-mark svg { width: 22px; height: 22px; }
+  .brand-mark { width: 29px; height: 29px; }
+  .nav-meta { gap: 5px; }
+  .profile-link { width: 31px; min-height: 36px; }
+  .profile-link span { display: none; }
   .connection { font-size: .77rem; gap: 6px; }
   .contracts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin-bottom: 10px; }
   .contracts-label { display: none; }
@@ -282,8 +299,9 @@ footer a { color: var(--soft); }
 }
 @media (max-width: 355px) {
   .shell { padding-inline: 8px; }
-  .nav-inner { gap: 10px; }
-  nav { gap: 8px; }
+  .nav-inner { gap: 5px; }
+  .nav-meta { gap: 2px; }
+  nav { gap: 6px; }
   .contract { gap: 3px; font-size: .77rem; }
   .contract img { width: 16px; height: 16px; }
   .chart-head { flex-wrap: wrap; }
