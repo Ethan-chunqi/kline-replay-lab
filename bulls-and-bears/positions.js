@@ -33,6 +33,18 @@ function readAmount(text,lang) {
   return parseAmount(lang === 'ru' && raw.includes(',') && !raw.includes('.') ? raw.replace(',','.') : raw);
 }
 
+export function readPrincipal(text, lang, currency='USDT') {
+  let raw=String(text).normalize('NFKC').trim().replace(/[\s\u00a0\u202f]/g,'');
+  const suffix=currency==='CNY'?/(?:人民币|RMB|CNY|元)$/i:currency==='KRW'?/(?:KRW|원)$/i:/(?:USDT|USD|U|美元)$/i;
+  raw=raw.replace(suffix,'').replace(currency==='CNY'?/^[¥￥]/:currency==='KRW'?/^₩/:/^\$/,'');
+  const magnitude=raw.match(/(万|萬|w|亿|億|[km])$/i)?.[0].toLowerCase();
+  const factor=({'万':1e4,'萬':1e4,w:1e4,'亿':1e8,'億':1e8,k:1e3,m:1e6})[magnitude] || 1;
+  if (magnitude) raw=raw.slice(0,-1);
+  raw=lang==='ru' ? raw.replace(',','.') : raw.replace(/,/g,'');
+  const parsed=parseAmount(raw);
+  return parsed && parsed*factor<=Number.MAX_SAFE_INTEGER ? parsed*factor : null;
+}
+
 function label(key) { return '<span data-pos-text="' + key + '"></span>'; }
 function field(id,caption,unit) {
   return '<label class="position-field" id="' + id + '-label">' + label(caption) +
@@ -159,7 +171,7 @@ export function createPositions(host,{t}) {
   }
 
   function persist() {
-    const capital = readAmount(el('capital').value,state.lang);
+    const capital = readPrincipal(el('capital').value,state.lang,state.currency);
     const rate = readAmount(el('maintenance').value,state.lang);
     const leverage = +el('leverage').value;
     if (futures(state)) {
@@ -214,7 +226,7 @@ export function createPositions(host,{t}) {
     const digits = Number.isInteger(state.priceDigits) ? Math.max(0,Math.min(8,state.priceDigits)) : 2;
     const priceUnit = index || future ? tr('点') : currency;
     const quantityUnit = future ? tr('手') : crypto ? (state.base || symbol.replace(/USDT$/,'')) : tr(index ? '模拟份额' : '股');
-    const cap = readAmount(el('capital').value,lang);
+    const cap = readPrincipal(el('capital').value,lang,state.currency);
     const leverage = +el('leverage').value;
     const rate = readAmount(el('maintenance').value,lang);
     const custom = el('basis').value === 'custom';
@@ -352,6 +364,10 @@ export function createPositions(host,{t}) {
       draw();
     });
   }
+  el('capital').addEventListener('blur',()=>{
+    const n=readPrincipal(el('capital').value,state.lang,state.currency);
+    if(n) el('capital').value=num(state.lang,n,0,8);
+  });
   // Clearing an override and leaving the field restores the verified exchange rate.
   el('future-margin-rate').addEventListener('blur',() => {
     if (!futures(state) || el('future-margin-rate').value.trim()) return;

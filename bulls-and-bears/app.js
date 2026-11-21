@@ -3,7 +3,7 @@ import {createCycleTracker} from './cycle.js';
 import {createChartView} from './chart.js';
 import {getCryptoBars} from './crypto-intervals.js';
 import {equityCatalog, startEquityFeed, loadEquityWindow} from './equities/feed.js';
-import {createPositions} from './positions.js?v=two-lots';
+import {createPositions} from './positions.js?v=flex-capital';
 import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js';
 import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=direction-colors';
 import {percent} from './metrics.js';
