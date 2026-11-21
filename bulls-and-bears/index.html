@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101217">
+  <meta name="description" content="刘鲨鱼的 Bulls &amp; Bears 多市场行情终端，查看加密合约、美股、ETF 和 A 股指数 K 线、周期高低点和模拟持仓。">
+  <meta property="og:site_name" content="刘鲨鱼">
+  <meta property="og:title" content="刘鲨鱼 · Bulls &amp; Bears">
+  <meta property="og:description" content="加密、美股与 A 股指数的 K 线、周期高低点与模拟持仓。">
+  <meta property="og:image" content="https://ethan-chunqi.github.io/kline-replay-lab/bulls-and-bears/brand/liushayu-cover.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:creator" content="@LiuShaYu2026">
+  <title>刘鲨鱼 · Bulls &amp; Bears</title>
+  <link rel="icon" href="./brand/liushayu-avatar.jpg" type="image/jpeg">
+  <link rel="apple-touch-icon" href="./brand/liushayu-avatar.jpg">
+  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./market.css">
+  <script>try {document.documentElement.dataset.theme = localStorage.getItem('bulls-bears-theme') === 'light' ? 'light' : 'dark'} catch {}</script>
+</head>
+<body>
+  <a class="skip" href="#main" data-i18n="跳至行情">跳至行情</a>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-x" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M18.9 2h3.3l-7.2 8.2L23.5 22h-6.7l-5.2-6.8L5.7 22H2.4l7.7-8.8L1.9 2h6.9l4.7 6.2L18.9 2Zm-1.2 18h1.8L7.8 3.9h-2L17.7 20Z"/></symbol>
+    <symbol id="i-market" viewBox="0 0 24 24"><path d="M4 4v15h16M7 14l4-5 4 3 5-7"/></symbol>
+    <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7.5h7M9 12h1m4 0h1m-6 4h1m4 0h1"/></symbol>
+    <symbol id="i-candle" viewBox="0 0 24 24"><path d="M5 3v5m0 7v5m7-16v8m0 5v4m7-19v4m0 7v5"/><rect x="3" y="8" width="4" height="7" rx=".6"/><rect x="10" y="12" width="4" height="5" rx=".6"/><rect x="17" y="6" width="4" height="7" rx=".6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m3 6 6 6 4-4 8 9m-6 0h6v-6"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m3 17 6-6 4 4 8-9m-6 0h6v6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 10a8 8 0 1 1 1 7M4 4v6h6"/></symbol>
+    <symbol id="i-range" viewBox="0 0 24 24"><path d="M3 8h18M3 16h18"/><path d="m7 5-3 3 3 3m10 2 3 3-3 3"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-9v.1"/></symbol>
+  </svg>
+  <header class="topbar">
+    <div class="shell nav-inner">
+      <a class="brand" href="#market" aria-label="刘鲨鱼 Bulls &amp; Bears"><img class="brand-mark" src="./brand/liushayu-avatar.jpg" width="36" height="36" alt=""><span>刘鲨鱼<small>Bulls &amp; Bears</small></span></a>
+      <nav aria-label="主导航" data-i18n-aria="主导航">
+        <a href="#market" class="nav-link active" id="nav-market"><svg><use href="#i-market"/></svg><span data-i18n="行情总览">行情总览</span></a>
+        <a href="#calculator" class="nav-link" id="nav-calc"><svg><use href="#i-calc"/></svg><span data-i18n="模拟持仓">模拟持仓</span></a>
+      </nav>
+      <div class="nav-meta">
+        <button type="button" class="theme-btn" id="theme" aria-label="浅色" title="浅色"><span aria-hidden="true">☀</span></button>
+        <select id="language" class="small-select" aria-label="语言" data-i18n-aria="语言"><option value="zh">简体中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ru">Русский</option><option value="ko">한국어</option></select>
+        <div class="connection" id="connection" data-status="loading" role="status"><span class="status-dot"></span><span id="status-label">连接中</span></div>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="shell">
+    <section class="market-tools" id="market" data-i18n-aria="市场数据" aria-label="市场数据">
+      <div class="market-tabs" role="group" aria-label="选择市场" data-i18n-aria="选择市场">
+        <button type="button" data-region="crypto" aria-pressed="true" data-i18n="加密货币">加密货币</button>
+        <button type="button" data-region="us" aria-pressed="false" data-i18n="美股">美股</button>
+        <button type="button" data-region="cn" aria-pressed="false" data-i18n="A 股">A 股</button>
+      </div>
+      <div class="asset-switcher">
+        <div id="instruments" class="contracts" role="group" data-i18n-aria="热门标的" aria-label="热门标的"></div>
+        <select id="asset-select" class="small-select asset-select" data-i18n-aria="全部标的" aria-label="全部标的" hidden></select>
+      </div>
+    </section>
+    <section class="hero" aria-labelledby="asset-name">
+      <div class="quote">
+        <div class="asset-line"><img class="hero-coin" id="hero-coin" src="./coins/BTC.png" alt=""><h1 id="asset-name">BTC<span>USDT</span></h1><span class="pair" id="asset-kind">永续</span></div>
+        <div class="price-line"><strong id="price">—</strong><span id="quote-unit">USDT</span></div>
+        <div class="change-line"><span class="change-pill" id="change24">—</span><span id="change-name">24 小时涨跌幅</span></div>
+      </div>
+      <dl class="day-stats">
+        <div><dt id="day-high-label">24 小时最高</dt><dd id="day-high">—</dd></div>
+        <div><dt id="day-low-label">24 小时最低</dt><dd id="day-low">—</dd></div>
+      </dl>
+      <div class="trend">
+        <div class="trend-meta"><span><i></i><span id="trend-name">24 小时价格走势</span></span><span id="trend-range"></span></div>
+        <canvas id="spark" role="img" aria-label="价格走势" data-i18n-aria="价格走势"></canvas>
+        <div class="trend-times"><span id="trend-start">—</span><span id="trend-end">—</span></div>
+      </div>
+    </section>
+    <div id="feed-notice" class="notice" role="status" hidden></div>
+
+    <div class="market-grid">
+      <section class="card chart-card" aria-labelledby="chart-title">
+        <div class="card-head chart-head">
+          <div class="title-line"><span class="heading-icon"><svg><use href="#i-candle"/></svg></span><h2 id="chart-title" data-i18n="K 线走势">K 线走势</h2></div>
+          <div class="segmented intervals" role="group" aria-label="K 线周期" data-i18n-aria="K 线周期">
+            <button type="button" data-interval="15m" aria-pressed="true" data-i18n="15 分钟">15 分钟</button>
+            <button type="button" data-interval="30m" aria-pressed="false" data-i18n="30 分钟">30 分钟</button>
+            <button type="button" data-interval="1h" aria-pressed="false" data-i18n="1 小时">1 小时</button>
+            <button type="button" data-interval="1d" aria-pressed="false" data-i18n="日线">日线</button>
+          </div>
+        </div>
+        <div class="ohlc" aria-label="开高低收" data-i18n-aria="开高低收"><span><span data-i18n="开">开</span><b id="open">—</b></span><span><span data-i18n="高">高</span><b id="high">—</b></span><span><span data-i18n="低">低</span><b id="low">—</b></span><span><span data-i18n="收">收</span><b id="close">—</b></span></div>
+        <div class="chart-area"><div id="chart"></div><span id="chart-empty"></span></div>
+        <div class="chart-foot">
+          <div class="chart-legends"><span id="bar-source" class="muted" hidden></span><span class="legend"><i></i><span data-i18n="成交量">成交量</span><span class="muted" id="volume-unit"></span></span><span class="legend"><i class="gold-bar"></i><span data-i18n="金色为周期极值">金色为周期极值</span></span></div>
+          <div class="chart-actions"><select id="view-range" class="small-select" data-i18n-aria="显示范围" aria-label="显示范围"></select><button id="reset" type="button"><svg><use href="#i-reset"/></svg><span data-i18n="重置视图">重置视图</span></button></div>
+        </div>
+        <div class="chart-context" id="chart-context" hidden><span id="context-label"></span><button type="button" id="back-latest" data-i18n="返回最新">返回最新</button></div>
+      </section>
+      <section class="card extremes" aria-labelledby="extremes-title">
+        <div class="card-head"><div class="title-line"><span class="heading-icon"><svg><use href="#i-range"/></svg></span><h2 id="extremes-title" data-i18n="周期高低点">周期高低点</h2></div><span class="subtle-tag" id="cycle-status"></span></div>
+        <article class="extreme-box high-box">
+          <div class="extreme-top"><div class="extreme-name"><span class="direction-icon"><svg><use href="#i-down"/></svg></span><h3 data-i18n="历史高点回撤">历史高点回撤</h3></div><button class="locate" data-locate="high" data-i18n-aria="查看高点 K 线" aria-label="查看高点 K 线" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.2"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></svg><span data-i18n="定位 K 线">定位 K 线</span></button></div>
+          <strong class="extreme-value" id="drawdown">—</strong>
+          <div class="level"><span data-i18n="历史最高价">历史最高价</span><strong id="high-price">—</strong></div>
+          <div class="when"><span><svg><use href="#i-clock"/></svg><b id="high-ago">—</b></span><time id="high-at">—</time></div>
+        </article>
+        <article class="extreme-box low-box">
+          <div class="extreme-top"><div class="extreme-name"><span class="direction-icon"><svg><use href="#i-up"/></svg></span><h3 data-i18n="周期低点反弹">周期低点反弹</h3></div><button class="locate" data-locate="low" data-i18n-aria="查看低点 K 线" aria-label="查看低点 K 线" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.2"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></svg><span data-i18n="定位 K 线">定位 K 线</span></button></div>
+          <strong class="extreme-value" id="rebound">—</strong>
+          <div class="level"><span data-i18n="见顶后最低价">见顶后最低价</span><strong id="low-price">—</strong></div>
+          <div class="when"><span><svg><use href="#i-clock"/></svg><b id="low-ago">—</b></span><time id="low-at">—</time></div>
+        </article>
+      </section>
+    </div>
+    <section class="card calculator" id="calculator" aria-labelledby="calc-title">
+      <div class="card-head"><div class="title-line"><span class="heading-icon"><svg><use href="#i-calc"/></svg></span><h2 id="calc-title" data-i18n="模拟持仓">模拟持仓</h2></div><span class="subtle-tag" id="position-unit">USDT</span></div>
+      <div id="position-panel"></div>
+    </section>
+    <aside class="signature">
+      <div class="signature-inner">
+        <p class="signature-name">刘鲨鱼 <span>AI × Crypto</span></p>
+        <p class="signature-quote"><span data-i18n="等一个机会，迎来自己的爆发">等一个机会，迎来自己的爆发</span> 📈</p>
+        <div class="signature-links">
+          <a href="https://x.com/LiuShaYu2026" target="_blank" rel="me noopener noreferrer"><svg aria-hidden="true"><use href="#i-x"/></svg><span data-i18n="关注我的 X">关注我的 X</span></a>
+          <a class="binance-link" id="binance-link" href="https://www.bsmkweb.cc/register?ref=JJUKNB9R" target="_blank" rel="sponsored noopener noreferrer"><span data-i18n="一键注册币安">一键注册币安</span></a><span class="referral-label"><span data-i18n="参与经济周期">参与经济周期</span> · <span data-i18n="推广链接">推广链接</span></span>
+        </div>
+      </div>
+    </aside>
+    <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a></span><span id="updated"></span></footer>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

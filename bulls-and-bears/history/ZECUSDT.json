@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "symbol": "ZECUSDT",
+  "market": "perpetual",
+  "sources": {
+    "binance-usdm": {
+      "asOf": 1795219199999,
+      "historyStart": 1580860800000,
+      "dailyBars": 2481,
+      "high": {
+        "price": 1699.0,
+        "time": 1790459340000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=ZECUSDT&interval=1m&startTime=1790459340000&endTime=1790459399999&limit=1000"
+      },
+      "low": {
+        "price": 725.89,
+        "time": 1795209060000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=ZECUSDT&interval=1m&startTime=1795209060000&endTime=1795209119999&limit=1000"
+      }
+    },
+    "bybit-linear": {
+      "asOf": 1795219199999,
+      "historyStart": 1637712000000,
+      "dailyBars": 1823,
+      "high": {
+        "price": 1700.0,
+        "time": 1790459340000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=ZECUSDT&interval=1&start=1790459340000&end=1790459399999&limit=1000"
+      },
+      "low": {
+        "price": 726.24,
+        "time": 1795209060000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=ZECUSDT&interval=1&start=1795209060000&end=1795209119999&limit=1000"
+      }
+    }
+  },
+  "method": "Each exchange's linear USDT perpetual last-trade prices. First minute reaching the all-time high; first minute reaching the lowest later price. UTC millisecond timestamps identify minute opens. asOf is the last included UTC daily close."
+}

@@ -1,31 +1,3 @@
-# 刘鲨鱼 · 永续合约终端
+# 刘鲨鱼 · Bulls & Bears
 
-[打开行情终端](https://ethan-chunqi.github.io/kline-replay-lab/perp-terminal/) · [刘鲨鱼的 X 主页](https://x.com/LiuShaYu2026)
-
-支持 BTC、BNB、HYPE、SOL、ZEC 的 USDT 永续合约。行情优先使用 Binance USDⓈ-M 的最新成交价。主源不可用时，整个页面可切换到 Bybit 对应的线性永续合约。页面底部显示当前交易所和报价时间，失去连接时会标注快照时间。
-
-## 行情口径
-
-- K 线每根 15 分钟。24 小时、48 小时、7 天切换图表显示范围，可以缩放并拖动查看历史成交量和开高低收。
-- 历史高点取当前交易所该合约公开成交 K 线中的最高价。周期低点取首次达到该高点之后的最低成交价。页面时间均为北京时间。
-- 高点回撤 = (最新价 − 历史高点) ÷ 历史高点。低点反弹 = (最新价 − 周期低点) ÷ 周期低点。
-- 页面使用已核验的历史基线、此后的合约行情和当前未收盘 K 线。高低点时间的精度取决于原始行情，鼠标悬停在时间上可查看。
-- 首屏 24 小时最高、最低和涨跌幅按最近 96 根 15 分钟 K 线统计，含当前正在形成的一根。
-
-## 盈亏测算
-
-默认本金为 10,000 USDT，杠杆为 10 倍。左侧模拟历史高点做空，右侧模拟峰后低点做多。也可选择自定义开仓价。本金和杠杆可调整，浏览器将记住设置，自定义开仓价按币种保存。
-
-做空浮动盈亏 = 本金 × 杠杆 × (开仓价 − 最新价) ÷ 开仓价。
-
-做多浮动盈亏 = 本金 × 杠杆 × (最新价 − 开仓价) ÷ 开仓价。
-
-测算不计手续费、资金费、滑点及强平。
-
-## 本地运行与历史复算
-
-在此目录运行 `python3 -m http.server 8000`，然后打开 `http://localhost:8000/`。所有图表脚本和图标均随源码提供，无需构建或配置 API 密钥。
-
-`python3 scripts/build_anchors.py` 从两个交易所公开日 K 线重新计算历史基线，再用分钟 K 线核验极值时间。BTC 的记录存储于 `anchors.json`，其他四个币种位于 `history/`。各极值的 `evidence` 字段链接到原始分钟行情。
-
-图表使用 [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts)，许可证和版权信息位于 `vendor/`。各代币图标来自 [CoinPaprika](https://coinpaprika.com/)。
+行情终端已迁移至 [新网站](https://ethan-chunqi.github.io/kline-replay-lab/bulls-and-bears/)。[当前源码](../bulls-and-bears/)

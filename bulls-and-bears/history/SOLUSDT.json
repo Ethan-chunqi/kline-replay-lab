@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "symbol": "SOLUSDT",
+  "market": "perpetual",
+  "sources": {
+    "binance-usdm": {
+      "asOf": 1795219199999,
+      "historyStart": 1600041600000,
+      "dailyBars": 2259,
+      "high": {
+        "price": 295.6,
+        "time": 1737285300000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=SOLUSDT&interval=1m&startTime=1737285300000&endTime=1737285359999&limit=1000"
+      },
+      "low": {
+        "price": 60.03,
+        "time": 1780722120000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://fapi.binance.com/fapi/v1/klines?symbol=SOLUSDT&interval=1m&startTime=1780722120000&endTime=1780722179999&limit=1000"
+      }
+    },
+    "bybit-linear": {
+      "asOf": 1795219199999,
+      "historyStart": 1634256000000,
+      "dailyBars": 1863,
+      "high": {
+        "price": 295.6,
+        "time": 1737285300000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=SOLUSDT&interval=1&start=1737285300000&end=1737285359999&limit=1000"
+      },
+      "low": {
+        "price": 60.03,
+        "time": 1780722120000,
+        "precision": "minute",
+        "precisionMs": 60000,
+        "evidence": "https://api.bybit.com/v5/market/kline?category=linear&symbol=SOLUSDT&interval=1&start=1780722120000&end=1780722179999&limit=1000"
+      }
+    }
+  },
+  "method": "Each exchange's linear USDT perpetual last-trade prices. First minute reaching the all-time high; first minute reaching the lowest later price. UTC millisecond timestamps identify minute opens. asOf is the last included UTC daily close."
+}
