@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#101217">
-  <meta name="description" content="刘鲨鱼的 Bulls &amp; Bears 多市场行情终端，查看加密合约、美股、中国 A 股与韩国股市 K 线，对比持仓收益、银行利息和生活购买力。">
+  <meta name="description" content="刘鲨鱼的 Bulls &amp; Bears 多市场行情终端，查看加密合约、美股、中国 A 股与韩国股市 K 线，对比持仓收益、理财收益和生活购买力。">
   <meta property="og:site_name" content="刘鲨鱼">
   <meta property="og:title" content="刘鲨鱼 · Bulls &amp; Bears">
-  <meta property="og:description" content="加密、美股、中国 A 股与韩股行情。对比做多、做空与银行存款收益，在交易时段模拟开单。">
+  <meta property="og:description" content="加密、美股、中国 A 股与韩股行情。对比做多、做空与理财收益，在交易时段模拟开单。">
   <meta property="og:image" content="https://ethan-chunqi.github.io/kline-replay-lab/bulls-and-bears/brand/liushayu-cover.jpg">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:creator" content="@LiuShaYu2026">
@@ -16,7 +16,7 @@
   <link rel="apple-touch-icon" href="./brand/liushayu-avatar.jpg">
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./market.css?v=20261122-market-v3">
-  <link rel="stylesheet" href="./position-extras.css?v=20261122-market-v3">
+  <link rel="stylesheet" href="./position-extras.css?v=20261122-comparisons">
   <link rel="stylesheet" href="./market-art.css?v=20261122-market-v3">
   <link rel="stylesheet" href="./paper-trading.css?v=20261122-market-v3">
   <script>
@@ -89,7 +89,7 @@
     </section>
     <div id="feed-notice" class="notice" role="status" hidden></div>
 
-    <div class="market-grid">
+    <div class="chart-layout">
       <section class="card chart-card" aria-labelledby="chart-title">
         <div class="card-head chart-head">
           <div class="title-line"><span class="heading-icon"><svg><use href="#i-candle"/></svg></span><h2 id="chart-title" data-i18n="K 线走势">K 线走势</h2></div>
@@ -114,21 +114,6 @@
         </div>
         <div class="chart-context" id="chart-context" hidden><span id="context-label"></span><button type="button" id="back-latest" data-i18n="返回最新">返回最新</button></div>
       </section>
-      <section class="card extremes" aria-labelledby="extremes-title">
-        <div class="card-head"><div class="title-line"><span class="heading-icon"><svg><use href="#i-range"/></svg></span><h2 id="extremes-title" data-i18n="周期高低点">周期高低点</h2></div><span class="subtle-tag" id="cycle-status"></span></div>
-        <article class="extreme-box high-box">
-          <div class="extreme-top"><div class="extreme-name"><span class="direction-icon"><svg><use href="#i-down"/></svg></span><h3 data-i18n="历史高点回撤">历史高点回撤</h3></div><button class="locate" data-locate="high" data-i18n-aria="查看高点 K 线" aria-label="查看高点 K 线" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.2"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></svg><span data-i18n="定位 K 线">定位 K 线</span></button></div>
-          <strong class="extreme-value" id="drawdown">—</strong>
-          <div class="level"><span data-i18n="历史最高价">历史最高价</span><strong id="high-price">—</strong></div>
-          <div class="when"><span><svg><use href="#i-clock"/></svg><b id="high-ago">—</b></span><time id="high-at">—</time></div>
-        </article>
-        <article class="extreme-box low-box">
-          <div class="extreme-top"><div class="extreme-name"><span class="direction-icon"><svg><use href="#i-up"/></svg></span><h3 data-i18n="周期低点反弹">周期低点反弹</h3></div><button class="locate" data-locate="low" data-i18n-aria="查看低点 K 线" aria-label="查看低点 K 线" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.2"/><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/></svg><span data-i18n="定位 K 线">定位 K 线</span></button></div>
-          <strong class="extreme-value" id="rebound">—</strong>
-          <div class="level"><span data-i18n="见顶后最低价">见顶后最低价</span><strong id="low-price">—</strong></div>
-          <div class="when"><span><svg><use href="#i-clock"/></svg><b id="low-ago">—</b></span><time id="low-at">—</time></div>
-        </article>
-      </section>
     </div>
     <section class="card calculator" id="calculator" aria-labelledby="calc-title" data-direction-colors="default">
       <div class="card-head"><div class="title-line"><span class="heading-icon"><svg><use href="#i-calc"/></svg></span><h2 id="calc-title" data-i18n="positions">你的持仓</h2></div><div class="direction-tools">
@@ -150,6 +135,6 @@
     </aside>
     <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a><span class="divider">/</span><a href="./brand/SOURCES.md" target="_blank" rel="noopener" data-i18n="artCredit">图片来源</a></span><span id="updated"></span></footer>
   </main>
-  <script type="module" src="./app.js?v=20261122-market-v3"></script>
+  <script type="module" src="./app.js?v=20261122-comparisons"></script>
 </body>
 </html>

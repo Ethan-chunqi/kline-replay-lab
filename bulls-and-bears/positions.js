@@ -1,7 +1,7 @@
 import {perpetualSources,bitgetPath,venueNames} from './perpetuals.js?v=20261122-market-v3';
 import {quotePerDollar,fxAsOf} from './equivalents/rates.js?v=20261122-market-v3';
-import { createEquivalent } from './equivalents/view.js?v=20261122-market-v3';
-import { createBankComparison } from './bank.js?v=20261122-market-v3';
+import { createEquivalent } from './equivalents/view.js?v=20261122-comparisons';
+import { createBankComparison } from './bank.js?v=20261122-comparisons';
 import { parseAmount, readPrincipal } from './metrics.js?v=20261122-market-v3';
 
 const storageKey = 'market-positions-v1';
@@ -49,6 +49,19 @@ const details = [
   ['contract','合约'], ['multiplier','合约乘数'], ['tick','最小变动价位'], ['point-value','每点盈亏'],
   ['tick-value','每跳盈亏'], ['margin-used','目前保证金占用'],
 ];
+function detailsToggle() {
+  return '<summary><span class="when-closed">' + label('positionDetails') + '</span><span class="when-open">' + label('hidePositionDetails') + '</span></summary>';
+}
+
+function cycleDetails(short) {
+  const side = short ? 'high' : 'low';
+  return `<section class="cycle-detail ${side}-box">
+    <div class="extreme-top"><h4>${label(short?'历史高点回撤':'周期低点反弹')}</h4>
+    <button type="button" class="locate" data-locate="${side}" data-i18n-aria="${short?'查看高点 K 线':'查看低点 K 线'}" disabled>${label('定位 K 线')} ↗</button></div>
+    <div class="level">${short?label('历史最高价'):'<span></span>'}<strong id="${side}-price">—</strong></div>
+    <div class="when"><b id="${side}-ago">—</b><time id="${side}-at">—</time></div>
+    <small class="cycle-status" id="${side}-cycle-status"></small></section>`;
+}
 function card(side) {
   const short = side === 'short';
   const futureRows = ['contract','multiplier','tick','point-value','tick-value','margin-used'];
@@ -58,8 +71,10 @@ function card(side) {
   return '<article class="result result-' + side + '"><div class="result-head"><span class="position"><svg aria-hidden="true"><use href="#i-' +
     (short ? 'down' : 'up') + '"/></svg>' + label(short ? '做空' : '做多') + '</span><span class="result-label">' + label('未实现盈亏') +
     '</span></div><div class="result-price"><strong id="' + side + '-pnl">—</strong><span data-unit="currency"></span></div>' +
-    '<div class="position-roe">' + label('returnOnCapital') + ' <b id="' + side + '-roi">—</b></div><div class="value-equivalent" hidden></div><dl class="position-table">' + rows +
-    '</dl><p class="position-risk" id="' + side + '-risk" hidden></p></article>';
+    '<div class="position-metrics"><div>' + label('returnOnCapital') + ' <b id="' + side + '-roi">—</b></div><div>' +
+    label(short?'priceDrawdown':'priceRebound') + ' <b id="' + (short?'drawdown':'rebound') + '">—</b></div></div>' +
+    '<div class="value-equivalent" hidden></div><p class="position-risk" id="' + side + '-risk" hidden></p>' +
+    '<details class="position-details">' + detailsToggle() + cycleDetails(short) + '<dl class="position-table">' + rows + '</dl></details></article>';
 }
 
 // One-way linear, isolated simulation. Maintenance is a fixed reference share
@@ -123,12 +138,12 @@ export function createPositions(host,{t}) {
     '<label class="leverage position-field">' + label('杠杆倍数') + '<select id="leverage">' +
     leverages.map(l => '<option value="' + l + '">' + l + '×</option>').join('') + '</select></label></div>' +
     '<div class="amount-row" id="future-controls" hidden>' + field('lots','交易手数','lots') + '</div><small class="result-label position-rate-source" id="future-rate-info" hidden><span id="future-rate-source"></span> <a id="future-rate-evidence" target="_blank" rel="noopener noreferrer" hidden></a></small>' +
-    '<label class="position-field">' + label('开仓基准') + '<select id="basis"><option value="extremes" data-pos-text="历史高点做空 / 周期低点做多"></option>' +
-    '<option value="custom" data-pos-text="自定义多空开仓价"></option></select></label>' + field('entry','自定义开仓价','price') +
+    '<details class="entry-settings"><summary>' + label('entrySettings') + '</summary><label class="position-field">' + label('开仓基准') + '<select id="basis"><option value="extremes" data-pos-text="历史高点做空 / 周期低点做多"></option>' +
+    '<option value="custom" data-pos-text="自定义多空开仓价"></option></select></label>' + field('entry','自定义开仓价','price') + '</details>' +
     '<p id="input-error" role="status" hidden></p></div>' + card('long') + card('short') +
-    '</div><section class="bank-comparison"></section><p class="position-quote"></p><p class="calc-note position-note"></p>';
+    '<article class="result bank-comparison"></article></div><p class="position-quote"></p><p class="calc-note position-note"></p>';
   const equivalents=Object.fromEntries(['short','long'].map(side=>[side,createEquivalent(host.querySelector('.result-'+side+' .value-equivalent'),t)]));
-  const bank=createBankComparison(host.querySelector('.bank-comparison'),{t,num,readAmount:(text,lang)=>readPrincipal(text,lang,'CNY')});
+  const bank=createBankComparison(host.querySelector('.bank-comparison'),{t,num,detailsToggle,readAmount:(text,lang)=>readPrincipal(text,lang,'CNY')});
   const elements = new Map([...host.querySelectorAll('[id]')].map(el => [el.id,el]));
   const el = id => elements.get(id);
   const write = (id,v) => { if (el(id).textContent !== v) el(id).textContent = v; };

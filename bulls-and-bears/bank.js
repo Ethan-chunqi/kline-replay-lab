@@ -1,3 +1,5 @@
+import {createEquivalent} from './equivalents/view.js?v=20261122-comparisons';
+
 // ACT/365 fixed, simple interest with a common start for all markets.
 const startMs = Date.parse('2026-01-01T00:00:00+08:00');
 const yearSeconds = 365 * 24 * 60 * 60;
@@ -11,12 +13,17 @@ export function bankValue(principal, now) {
   return {interest, balance:principal + interest, precision:Math.min(16,Math.max(2,Math.ceil(-Math.log10(perSecond))))};
 }
 
-export function createBankComparison(host,{t,num,readAmount}) {
-  host.innerHTML = '<div class="bank-heading"><div><b data-bank-label="bankTitle"></b><span class="bank-rate">3%</span></div><small data-bank-label="bankBasis"></small></div>' +
-    '<div class="bank-figure"><span data-bank-label="bankBalance"></span><strong id="bank-balance">—</strong></div>' +
-    '<div class="bank-figure bank-earned"><span data-bank-label="bankInterest"></span><strong id="bank-interest">—</strong></div>' +
-    '<div class="bank-funding"><label for="bank-input" data-bank-label="bankPrincipal"></label><strong id="bank-principal"></strong>' +
-    '<div class="input-wrap" hidden><input id="bank-input" inputmode="decimal" type="text" autocomplete="off"><span>CNY</span></div></div>';
+export function createBankComparison(host,{t,num,readAmount,detailsToggle}) {
+  host.innerHTML = '<div class="result-head"><b class="position" data-bank-label="bankTitle"></b><span class="result-label" data-bank-label="bankInterest"></span></div>' +
+    '<div class="result-price"><strong id="bank-interest">—</strong><span class="bank-unit"></span></div>' +
+    '<div class="position-metrics"><div><span data-bank-label="annualReturn"></span><b>3%</b></div>' +
+    '<div><span data-bank-label="bankBalance"></span><b id="bank-balance">—</b></div></div><div class="value-equivalent" hidden></div>' +
+    '<div class="bank-funding"><label for="bank-input" data-bank-label="bankPrincipal"></label><div class="input-wrap" hidden>' +
+    '<input id="bank-input" inputmode="decimal" type="text" autocomplete="off"><span>CNY</span></div></div>' +
+    '<details class="position-details">' + detailsToggle() + '<p class="bank-basis" data-bank-label="bankBasis"></p>' +
+    '<dl class="position-table"><div><dt data-bank-label="bankPrincipal"></dt><dd id="bank-principal"></dd></div></dl></details>';
+  const equivalent=createEquivalent(host.querySelector('.value-equivalent'),t,'incomeWorth');
+  const unit=host.querySelector('.bank-unit');
   const field=host.querySelector('#bank-input');
   const funding=host.querySelector('#bank-principal');
   const amount=host.querySelector('#bank-balance');
@@ -34,7 +41,10 @@ export function createBankComparison(host,{t,num,readAmount}) {
     const value=bankValue(p,Date.now());
     if (future) field.setAttribute('aria-invalid',String(!value));
     const balance=value ? num(lang,value.balance,value.precision)+' '+currency : '—';
-    const earned=value ? '+'+num(lang,value.interest,value.precision)+' '+currency : '—';
+    const earned=value ? '+'+num(lang,value.interest,value.precision) : '—';
+    if(unit.textContent!==currency) unit.textContent=currency;
+    funding.textContent=value ? num(lang,p,2)+' '+currency : '—';
+    equivalent.update(value?.interest,currency,lang,'savings');
     if(amount.textContent!==balance) amount.textContent=balance;
     if(accrued.textContent!==earned) accrued.textContent=earned;
   }
@@ -46,9 +56,8 @@ export function createBankComparison(host,{t,num,readAmount}) {
       language=next.lang;
     }
     state=next;
+    field.closest('.bank-funding').hidden=!next.future;
     field.parentElement.hidden=!next.future;
-    funding.hidden=next.future;
-    funding.textContent=next.capital>0?num(next.lang,next.capital,2)+' '+next.currency:'—';
     paint();
   }
   field.addEventListener('input',()=>{

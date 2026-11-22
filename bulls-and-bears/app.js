@@ -7,9 +7,9 @@ import {createChartView} from './chart.js?v=20261122-market-v3';
 import {getCryptoBars,loadCryptoYear} from './crypto-intervals.js?v=20261122-market-v3';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
 import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-market-v3';
-import {createPositions} from './positions.js?v=20261122-market-v3';
+import {createPositions} from './positions.js?v=20261122-comparisons';
 import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-market-v3';
-import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-market-v3';
+import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-comparisons';
 import {percent} from './metrics.js?v=20261122-market-v3';
 
 window.EQUITY_DATA_URL = 'https://raw.githubusercontent.com/Ethan-chunqi/kline-replay-lab/market-data/quotes/';
@@ -290,10 +290,12 @@ function renderLevels() {
   const fixed=asset.symbol==='SOLUSDT';
   const lowLabel=document.querySelector('.low-box .level span');
   lowLabel.textContent=translate(fixed?'solLowSince':'见顶后最低价');
-  document.querySelector('.low-box h3').textContent=translate(fixed?'solRebound':'周期低点反弹');
-  write('cycle-status',(isFuture() && data.contract?data.contract+' · ':'')+translate(ready?(isCrypto()?(fixed?'solLowStartZone':'cycleFull'):levels.low?'可用历史':'低点与高点的时间顺序待确认'):(levels?.status==='unavailable'?'cycleUnavailable':'cycleLoading')));
-  $('cycle-status').title=fixed ? translate('solCycleTip') : ready && (data?.historyStart || levels?.historyStart) ? translate('历史起点')+' '+dt(data.historyStart || levels.historyStart,{dateOnly:true}) : '';
+  document.querySelector('.low-box h4').textContent=translate(fixed?'solRebound':'周期低点反弹');
+  const cycleText=(isFuture() && data.contract?data.contract+' · ':'')+translate(ready?(isCrypto()?(fixed?'solLowStartZone':'cycleFull'):levels.low?'可用历史':'低点与高点的时间顺序待确认'):(levels?.status==='unavailable'?'cycleUnavailable':'cycleLoading'));
+  const cycleTitle=fixed ? translate('solCycleTip') : ready && (data?.historyStart || levels?.historyStart) ? translate('历史起点')+' '+dt(data.historyStart || levels.historyStart,{dateOnly:true}) : '';
   for(const side of ['high','low']) {
+    write(side+'-cycle-status',cycleText);
+    $(side+'-cycle-status').title=cycleTitle;
     const p=levels?.[side],btn=document.querySelector('[data-locate="'+side+'"]'),at=$(side+'-at');
     btn.disabled=!p; const pct=side==='high'?'drawdown':'rebound';
     if(!p) { for(const id of [side+'-price',side+'-at',side+'-ago',pct]) write(id,'—');at.removeAttribute('datetime');continue; }
@@ -439,7 +441,10 @@ for(const btn of all('[data-region]'))btn.addEventListener('click',()=>{
   openAsset(assets.get(last)?.region===region?last:regionDefault[region]);
 });
 for(const b of all('[data-interval]')) b.addEventListener('click',()=>switchInterval(b.dataset.interval));
-for(const b of all('[data-locate]')) b.addEventListener('click',()=>locate(b.dataset.locate));
+for(const b of all('[data-locate]')) b.addEventListener('click',()=>{
+  document.querySelector('.chart-card').scrollIntoView({block:'start'});
+  void locate(b.dataset.locate);
+});
 $('asset-select').addEventListener('change',e=>openAsset(e.target.value));
 $('year-range').addEventListener('click',()=>switchInterval(interval,!yearMode));
 $('year-daily').addEventListener('click',()=>switchInterval('1d',true));

@@ -1,9 +1,12 @@
 import {reveal} from '../motion.js?v=20261122-market-v3';
-import {quotePerDollar,fxAsOf,fxSources} from './rates.js?v=20261122-market-v3';
-import {iconCount,referenceItems} from './reference.js?v=20261122-market-v3';
+import {quotePerDollar,fxAsOf,fxSources} from './rates.js?v=20261122-comparisons';
+import {referenceItems} from './reference.js?v=20261122-comparisons';
+
+import {createBundleView} from './bundle-view.js?v=20261122-comparisons';
+import {createCatalog} from './catalog.js?v=20261122-comparisons';
 
 const items=new Map(referenceItems.map(item=>[item.id,item]));
-// Upper bounds are in USD. Each band has five alternatives.
+// Dollar bands keep familiar comparisons and also include every item priced in the band.
 export const bands=[
   [5,['beijing-metro','us-stamp','ikea-bag','costco-hot-dog','us-rice']],
   [10,['us-bread','us-gasoline','shanghai-astronomy','badaling-winter','nyc-ferry']],
@@ -26,16 +29,42 @@ export function usdEquivalent(amount,currency) {
 }
 
 const byPrice=[...referenceItems].sort((a,b)=>usdEquivalent(b.price,b.currency)-usdEquivalent(a.price,a.currency));
-function quantity(item,amount,currency,lang) {
-  const count=Math.abs(usdEquivalent(amount,currency))/usdEquivalent(item.price,item.currency);
-  return count.toLocaleString(locale[lang],count<0.01?{maximumSignificantDigits:2}:{maximumFractionDigits:2})+' '+item.unit[langIndex[lang]??0];
+const catalogItems=[...byPrice].reverse();
+for(let i=0;i<bands.length;i++) {
+  const lower=i?bands[i-1][0]:0, [upper,ids]=bands[i];
+  for(const item of catalogItems) {
+    const price=usdEquivalent(item.price,item.currency);
+    if(price>=lower && price<upper && !ids.includes(item.id)) ids.push(item.id);
+  }
+}
+const numberFormats=new Map();
+export function formatQuantity(item,amount,currency,lang,t) {
+  const count=quotePerDollar(currency)===quotePerDollar(item.currency)
+    ? Math.abs(amount)/item.price
+    : Math.abs(usdEquivalent(amount,currency))/usdEquivalent(item.price,item.currency);
+  const decimals=item.decimals??0;
+  const key=lang+'/'+decimals;
+  if(!numberFormats.has(key))numberFormats.set(key,new Intl.NumberFormat(locale[lang],{maximumFractionDigits:decimals}));
+  const number=numberFormats.get(key);
+  let unit=item.unit[langIndex[lang]??0];
+  if(lang==='en' && !decimals && count<1.5 && unit.endsWith('s')) {
+    unit=unit.endsWith('sses')?unit.slice(0,-2):unit.endsWith('ies')?unit.slice(0,-3)+'y':unit.slice(0,-1);
+  }
+  if(!decimals && count<0.5) return t(lang,'eqBelowOne',{unit});
+  if(decimals && count>0 && count<0.5*10**-decimals) return '< '+number.format(10**-decimals)+' '+unit;
+  return number.format(count)+' '+unit;
 }
 
-export function createEquivalent(host,t) {
+export function createEquivalent(host,t,gainKey='eqGain') {
   host.innerHTML='<div class="eq-head"><span class="eq-caption"></span><button type="button" class="eq-next"></button></div>' +
-    '<a class="eq-main" target="_blank" rel="noopener noreferrer"><span class="eq-icon" aria-hidden="true"></span><span class="eq-item"><strong></strong><span></span><small></small></span></a>' +
-    '<details class="eq-compare"><summary></summary><ul class="eq-list"></ul></details><details class="eq-pricing"><summary></summary><div class="eq-sources"><span class="eq-price"></span><span class="eq-note"></span><a class="eq-source" target="_blank" rel="noopener noreferrer"></a><span class="eq-fx"></span></div></details>';
+    '<div class="eq-mode" role="group"><button type="button" data-mode="single" aria-pressed="true"></button><button type="button" data-mode="bundle" aria-pressed="false"></button></div>' +
+    '<div class="eq-single"><a class="eq-main" target="_blank" rel="noopener noreferrer"><img class="eq-icon" alt="" width="70" height="70"><span class="eq-item"><strong></strong><span></span><small></small></span></a>' +
+    '<a class="eq-video" target="_blank" rel="noopener noreferrer" hidden></a>'+
+    '<div class="eq-tools"><details class="eq-compare"><summary></summary><ul class="eq-list"></ul></details><button type="button" class="eq-all"></button></div>'+
+    '<details class="eq-pricing"><summary></summary><div class="eq-sources"><span class="eq-price"></span><span class="eq-note"></span><a class="eq-source" target="_blank" rel="noopener noreferrer"></a><span class="eq-fx"></span></div></details></div><div class="eq-bundle" hidden></div>';
   const q=s=>host.querySelector(s);
+  const quantity=(item,amount,currency,lang)=>formatQuantity(item,amount,currency,lang,t);
+  const catalogButton=q('.eq-all'), video=q('.eq-video');
   const main=q('.eq-main'), icon=q('.eq-icon'), title=q('.eq-item>span'), size=q('.eq-item strong'), action=q('.eq-item small');
   const next=q('.eq-next'), caption=q('.eq-caption'), detail=q('.eq-pricing'), summary=q('.eq-pricing summary'), quote=q('.eq-price');
   const source=q('.eq-source'),fx=q('.eq-fx'),note=q('.eq-note');
@@ -43,6 +72,15 @@ export function createEquivalent(host,t) {
   const compareSummary=q('.eq-compare summary');
   const savedCurrencyText=[];
   let queue=[],pool=[],bestId='',compareKey='';
+  const modeGroup=q('.eq-mode'), single=q('.eq-single'), bundleHost=q('.eq-bundle');
+  const modeButtons=[...modeGroup.querySelectorAll('button')], bundleView=createBundleView(bundleHost,t);
+  let mode='single',variant=0;
+  for(const btn of modeButtons)btn.addEventListener('click',()=>{
+    mode=btn.dataset.mode;compare.open=false;
+    for(const option of modeButtons)option.setAttribute('aria-pressed',String(option===btn));
+    single.hidden=mode!=='single';bundleHost.hidden=mode!=='bundle';
+    paint();
+  });
   const hover=matchMedia('(hover: hover)');
   main.addEventListener('pointerenter',event=>{if(hover.matches && event.pointerType==='mouse'){compare.open=true;drawComparison();}});
   host.addEventListener('pointerleave',()=>{if(hover.matches && !host.contains(document.activeElement)) compare.open=false;});
@@ -66,6 +104,10 @@ export function createEquivalent(host,t) {
     }
   }
   let lastKey='',active,band,state,rendered;
+  const catalog=createCatalog(host,catalogItems,{t,quantity,onChoose(item){
+    active=item;detail.open=false;compare.open=false;paint();reveal(main);
+  }});
+  catalogButton.addEventListener('click',()=>{compare.open=false;catalog.open(state);});
   function choose(exclude) {
     if (!queue.length) {
       queue=[...pool];
@@ -87,17 +129,19 @@ export function createEquivalent(host,t) {
       const unitPrice=active.price.toLocaleString(locale[lang],{maximumFractionDigits:4});
       title.textContent=active.title[id];
       main.href=active.buyUrl || active.sourceUrl;
-      action.textContent=tr(!active.buyUrl?'eqViewSource':active.linkType==='listings'?'eqListings':active.linkType==='booking'?'eqBook':'eqShop')+' ↗';
-      icon.style.backgroundSize=iconCount*100+'% 100%';
-      icon.style.backgroundPosition=(active.icon/(iconCount-1)*100)+'% center';
-      icon.replaceChildren();
-      if(active.imageUrl) {
-        const image=new Image();
-        image.alt='';image.referrerPolicy='no-referrer';image.decoding='async';
-        image.onload=()=>{if(icon.contains(image))image.classList.add('loaded');};
-        image.onerror=()=>image.remove();image.src=active.imageUrl;icon.append(image);
-      }
-      next.textContent=tr('eqNext');
+      action.textContent=tr(!active.buyUrl?'eqViewSource':!active.videoUrl?'eqEnjoy':active.linkType==='listings'?'eqListings':active.linkType==='booking'?'eqBook':'eqShop')+' ↗';
+      icon.src='./equivalents/art/'+active.id+'.webp';
+      modeGroup.setAttribute('aria-label',tr('eqMode'));
+      modeButtons[0].textContent=tr('eqSingle');modeButtons[1].textContent=tr('eqBundle');
+      catalogButton.textContent=t(lang,'eqCatalog',{count:items.size});
+      video.hidden=!active.videoUrl;
+      if(active.videoUrl) {
+        const videoLabel=tr('eqEnjoy')+(active.videoScope==='related'?' · '+tr('eqRelatedVideo'):'');
+        video.href=active.videoUrl;video.textContent='▶ '+videoLabel+' ↗';
+        video.setAttribute('aria-label',videoLabel+' · '+active.title[id]);
+        video.title=[lang==='zh'?active.videoTitle:active.title[id],active.videoCreator].filter(Boolean).join(' · ');
+      } else {video.removeAttribute('href');video.removeAttribute('title');}
+
       summary.textContent=tr('eqDetails');compareSummary.textContent=tr('eqCompare');
       quote.textContent=unitPrice+' '+active.currency+' / '+active.unit[id]+' · '+active.asOf;
       note.hidden=lang!=='zh' || !active.noteZh;
@@ -112,22 +156,30 @@ export function createEquivalent(host,t) {
         a.textContent='1 USD ≈ '+quotePerDollar(code)+' '+code+' · '+fxAsOf;fx.append(a);
       }
     }
-    caption.textContent=tr(amount>0?'eqGain':'eqLoss');
-    const text='≈ '+quantity(active,amount,currency,lang);
+    caption.textContent=tr(amount>0?gainKey:'eqLoss');
+    next.textContent=tr(mode==='single'?'eqNext':'eqNextBundle');
+    if(mode==='bundle'){bundleView.update(state,variant);return;}
+    const text=quantity(active,amount,currency,lang);
     if (text!==size.textContent) size.textContent=text;
     if(compare.open) drawComparison();
+    catalog.update(state);
   }
-  next.addEventListener('click',()=>{if(active){choose(state.exclude);paint();reveal(main);}});
+  next.addEventListener('click',()=>{
+    if(!active)return;
+    if(mode==='bundle')variant++;
+    else choose(state.exclude);
+    paint();reveal(mode==='bundle'?bundleHost:main);
+  });
   return {get id(){return active?.id;},update(amount,currency,lang,symbol,exclude){
     const dollars=Math.abs(usdEquivalent(amount,currency));
     host.hidden=!Number.isFinite(amount)||!Number.isFinite(dollars)||dollars===0;
-    if(host.hidden)return;
+    if(host.hidden){catalog.close();return;}
     state={amount,currency,lang,exclude};
     const nextBand=bands.find(([upper])=>dollars<upper);
     const best=dollars>=10000?byPrice.find(item=>usdEquivalent(item.price,item.currency)<=dollars):null;
     if(band!==nextBand || symbol!==lastKey || bestId!==(best?.id||'')) {
       band=nextBand;lastKey=symbol;bestId=best?.id||'';
-      pool=best?[...new Set([best.id,...band[1]])].slice(0,5):[...band[1]];
+      pool=best?[...new Set([best.id,...band[1]])]:[...band[1]];
       queue=[];
       if(best){active=best;queue=pool.filter(id=>id!==best.id);detail.open=false;}
       else choose(exclude);
