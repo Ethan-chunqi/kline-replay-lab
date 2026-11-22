@@ -17,11 +17,11 @@ const tradeCopy={
   ko:['매수가 · 주기 저점','매도가 · 주기 고점','매수 시각','매도 시각','지정 매수가','지정 매도가','계약 수','개시 증거금'],
 };
 const chartCopy={
-  zh:['低点 → 当前','高点 → 当前','区间成交量','图外时点','每柱含 {n} 根 K 线，末柱可不足'],
-  en:['Low → current','High → current','Interval volume','Outside chart range','{n} bars per candle, final group may be shorter'],
-  ja:['安値 → 現在','高値 → 現在','区間出来高','表示範囲外','1本に最大{n}本を集約'],
-  ru:['От минимума','От максимума','Объём за период','Вне диапазона','До {n} исходных свечей на столбец'],
-  ko:['저점 → 현재','고점 → 현재','구간 거래량','차트 범위 밖','막대당 최대 {n}개 봉 집계'],
+  zh:['低点 → 当前','高点 → 当前','区间成交量','图外时点'],
+  en:['Low → current','High → current','Interval volume','Outside chart range'],
+  ja:['安値 → 現在','高値 → 現在','区間出来高','表示範囲外'],
+  ru:['От минимума','От максимума','Объём за период','Вне диапазона'],
+  ko:['저점 → 현재','고점 → 현재','구간 거래량','차트 범위 밖'],
 };
 const gapCopy={zh:'中间时段已折叠',en:'Intervening dates are folded',ja:'途中の期間を省略',ru:'Средняя часть периода свёрнута',ko:'중간 기간 생략'};
 const locales={zh:'zh-CN',en:'en-US',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
@@ -117,37 +117,21 @@ function swells(ctx,colors) {
   ctx.restore();
 }
 
-function groupCandles(bars,extremeTimes,moves,breakAfter) {
-  const groupSize=Math.ceil(bars.length/112), groups=[];
-  const cut=Number.isFinite(breakAfter)?bars.findIndex(b=>b.time===breakAfter)+1:0;
-  let breakIndex=0;
-  for(let i=0;i<bars.length;) {
-    if(i===cut && cut>0)breakIndex=groups.length;
-    const stop=Math.min(i+groupSize,i<cut?cut:bars.length);
-    const part=bars.slice(i,stop);
-    const group={time:part[0].time,end:part.at(-1).time,open:part[0].open,close:part.at(-1).close,
-      high:Math.max(...part.map(b=>b.high)),low:Math.min(...part.map(b=>b.low)),
-      volume:part.reduce((sum,b)=>sum+(b.volume>0?b.volume:0),0)};
-    group.extremes=['low','high'].filter(kind=>{
-      const marked=part.find(b=>b.time===extremeTimes?.[kind]);
-      if(!marked || marked[kind]!==group[kind])return false;
-      const move=moves.find(m=>m.kind===kind);
-      return !move || move.price===marked[kind];
-    });
-    groups.push(group);i=stop;
-  }
-  return {groups,groupSize,breakIndex};
-}
-
 function chartModel(model,bars) {
   const currentTime=toMs(model.currentTime??model.chartAsOf);
   const moves=Number.isFinite(model.currentPrice)&&Number.isFinite(currentTime)?
     (model.moves||[]).filter(m=>['low','high'].includes(m.kind)&&Number.isFinite(m.price)&&Number.isFinite(m.time)&&toMs(m.time)<=currentTime)
       .map(m=>({...m,time:toMs(m.time)})).sort((a,b)=>a.kind==='low'?-1:1):[];
-  const {groups,groupSize,breakIndex}=groupCandles(bars,model.extremeTimes,moves,model.breakAfter);
+  // Preserve one candle per actual trading interval, including long daily histories.
+  const groups=bars.map(bar=>({...bar,end:bar.time,extremes:['low','high'].filter(kind=>{
+    if(model.extremeTimes?.[kind]!==bar.time)return false;
+    const move=moves.find(m=>m.kind===kind);
+    return !move || move.price===bar[kind];
+  })}));
+  const breakIndex=Number.isFinite(model.breakAfter)?bars.findIndex(bar=>bar.time===model.breakAfter)+1:0;
   const outside=moves.filter(m=>m.time<bars[0].time);
-  const height=362+(groupSize>1||outside.length||breakIndex?33:0)+(moves.length?(moves.length===1?68:92)+(moves.some(m=>m.volumeText)?30:0):0);
-  return {groups,groupSize,moves,outside,currentTime,height,breakIndex};
+  const height=362+(outside.length||breakIndex?33:0)+(moves.length?(moves.length===1?68:92)+(moves.some(m=>m.volumeText)?30:0):0);
+  return {groups,moves,outside,currentTime,height,breakIndex};
 }
 
 function transactionFields(model,t,trade,savings) {
@@ -175,7 +159,7 @@ function transactionFields(model,t,trade,savings) {
 }
 
 function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
-  const {groups,groupSize,moves,outside,currentTime,height,breakIndex}=chart, locale=locales[lang], labels=chartCopy[lang];
+  const {groups,moves,outside,currentTime,height,breakIndex}=chart, locale=locales[lang], labels=chartCopy[lang];
   const x=margin,w=inner, inset=28;
   rounded(ctx,x,y,w,height,24,colors.panel);
   const chartName=[model.interval,t.candles].filter(Boolean).join(' · ');
@@ -211,7 +195,7 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
   const gapWidth=breakIndex?28:0;
   const spacing=(plotRight-candleStart-gapWidth)/(groups.length+(moves.length?1:0));
   const candleX=i=>candleStart+(i+.5)*spacing+(breakIndex && i>=breakIndex?gapWidth:0);
-  const last=groups.at(-1),bodyWidth=Math.min(17,Math.max(2,spacing*.65));
+  const last=groups.at(-1),bodyWidth=Math.min(17,spacing*.69);
   function xAt(time) {
     if(time<groups[0].time)return plotLeft+17+34*earlierTimes.indexOf(time);
     if(time>=last.end) {
@@ -236,7 +220,7 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
     const edge=colors===dark?'#fff7ab':'#976000';
     ctx.save();
     if(marked){ctx.shadowColor='#ffd000';ctx.shadowBlur=8;}
-    ctx.strokeStyle=marked?edge:color;ctx.lineWidth=marked?3:1.8;
+    ctx.strokeStyle=marked?edge:color;ctx.lineWidth=marked?3:Math.min(1.8,spacing*.44);
     ctx.beginPath();ctx.moveTo(cx,priceY(b.high));ctx.lineTo(cx,priceY(b.low));ctx.stroke();
     const bodyY=Math.min(priceY(b.open),priceY(b.close)), bodyHeight=Math.max(2.6,Math.abs(priceY(b.close)-priceY(b.open)));
     ctx.fillStyle=color;ctx.fillRect(cx-bodyWidth/2,bodyY,bodyWidth,bodyHeight);
@@ -288,8 +272,8 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
   text(ctx,stamp(groups[0].time),candleStart,y+309,335,19,colors.muted);
   if(groups.length>1)text(ctx,stamp(last.end),candleX(groups.length-1),y+309,335,19,colors.muted,{align:'right'});
   let below=y+351;
-  if(groupSize>1||outside.length||breakIndex) {
-    const notes=[outside.length?'//  '+labels[3]:null,breakIndex?'//  '+gapCopy[lang]:null,groupSize>1?labels[4].replace('{n}',String(groupSize)):null].filter(Boolean);
+  if(outside.length||breakIndex) {
+    const notes=[outside.length?'//  '+labels[3]:null,breakIndex?'//  '+gapCopy[lang]:null].filter(Boolean);
     text(ctx,notes.join('   ·   '),plotLeft,below-6,w-2*inset,19,colors.soft);below+=33;
   }
   if(moves.length) {
