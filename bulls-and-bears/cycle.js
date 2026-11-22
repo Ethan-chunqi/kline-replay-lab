@@ -272,6 +272,19 @@ export function createCycleTracker(onUpdate) {
     onUpdate(value);
   }
 
+  // A fresh quote or candle can invalidate a snapshot before the finer history
+  // returns. Hide the superseded point immediately, including from share cards.
+  function currentLevels(result,state) {
+    if(!result?.high || !state?.candles?.length || state.asOf<=result.asOf) return result;
+    const newer=state.candles.filter(bar=>bar.time+QUARTER-1>result.asOf);
+    if(state.price>result.high.price || newer.some(bar=>bar.high>result.high.price))
+      return {...result,status:'loading',high:null,low:null};
+    const low=result.low;
+    if(low && ((state.price>0 && state.price<low.price) || newer.some(bar=>bar.time>low.time && bar.low<low.price)))
+      return {...result,low:null};
+    return result;
+  }
+
   async function pump() {
     if (runningGeneration === generation || disposed || Date.now() < retryAfter) return;
     const version = generation;
@@ -284,7 +297,7 @@ export function createCycleTracker(onUpdate) {
         try {
           const result = await calculate(state);
           if (version === generation && !disposed) {
-            emit({ ...result, symbol: state.symbol, sourceId: state.sourceId, status: 'ready', error: '' });
+            emit(currentLevels({ ...result, symbol: state.symbol, sourceId: state.sourceId, status: 'ready', error: '' },latest));
           }
         } catch (e) {
           if (version !== generation || disposed) continue;
@@ -308,6 +321,9 @@ export function createCycleTracker(onUpdate) {
         retryAfter = 0;
         clearTimeout(retryTimer);
         emit({ symbol: state?.symbol ?? '', sourceId: state?.sourceId ?? '', status: 'loading', high: null, low: null, asOf: null, error: '' });
+      } else {
+        const current=currentLevels(lastResult,state);
+        if(current!==lastResult)emit(current);
       }
       latest = state;
       dirty = true;

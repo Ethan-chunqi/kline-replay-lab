@@ -112,7 +112,7 @@ export function createPaperTrading(host,{t,localeFor,dateTime}) {
     if(asset.type==='index') desc+=' · '+tr('paperIndex');
     text($('#paper-quote'),label+' · '+desc);
     const exchange=$('#paper-fx');exchange.hidden=!['CNY','KRW'].includes(asset.currency);
-    if(!exchange.hidden)text(exchange,'1 USDT ≈ '+num(fx,4)+' '+asset.currency+' · '+tr('paperFx')+' '+fxAsOf);
+    if(!exchange.hidden)text(exchange,'1 USDT = '+num(fx,4)+' '+asset.currency+' · '+tr('paperFx')+' '+fxAsOf);
     text($('#paper-result'),feedback?tr(feedback):'');
     ledger.mark(asset,quote,now,online);
     for(const p of ledger.records) {

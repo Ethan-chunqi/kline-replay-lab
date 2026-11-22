@@ -1,8 +1,9 @@
+import {drawMoves} from './chart-moves.js?v=20261122-share';
 import {koreanHours} from './equities/korea-session.js?v=20261122-market-v3';
 import {
   CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineStyle, TickMarkType, createChart,
 } from './vendor/lightweight-charts-5.3.0.mjs';
-import { intervalMs, rememberCryptoLevel } from './crypto-intervals.js?v=20261122-market-v3';
+import { intervalMs, rememberCryptoLevel } from './crypto-intervals.js?v=20261122-share';
 
 const hour = intervalMs['1h'];
 const decimals = { BTCUSDT: 2, BNBUSDT: 2, HYPEUSDT: 4, SOLUSDT: 3, ZECUSDT: 2, OKBUSDT:2, BGBUSDT:4 };
@@ -73,6 +74,17 @@ export function findLevelIndex(items, view, kind) {
   return items.findIndex(b => b.time <= point.time && point.time + precision <= b.time + width && samePrice(b[kind], point.price));
 }
 
+function quoteFitsLast(bar,time,interval,market) {
+  if(!bar || !Number.isSafeInteger(time))return false;
+  if(interval==='1d' && market!=='crypto') {
+    return Math.floor(plotTime(bar.time,market)/86400)===Math.floor(plotTime(time,market)/86400);
+  }
+  const end=bar.time+intervalMs[interval];
+  if(time>=bar.time && time<end)return true;
+  // Some stock quote feeds stamp the closing print a few seconds after the bell.
+  return market!=='crypto' && time>=end && time<=end+60_000 && !inStockSession(time,market);
+}
+
 function timeFormats(locale, interval) {
   const make = options => new Intl.DateTimeFormat(locale, { timeZone: 'UTC', ...options });
   const day = make({ month: 'numeric', day: 'numeric' });
@@ -106,6 +118,8 @@ export function createChartView(container, onHover = () => {}, options = {}) {
   let line;
   let selectedHours = 24;
   let disposed = false;
+  let currentOnLast = false;
+  let invalidateOverlays = () => {};
   const chart = createChart(container, {
     autoSize: true,
     layout: { background: { type: ColorType.Solid, color: palettes.dark.background }, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', attributionLogo: true },
@@ -157,7 +171,18 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       });
     }}),
   };
-  candles.attachPrimitive({paneViews:()=>[extremeOverlay]});
+  const movesOverlay={
+    zOrder:()=> 'top',
+    renderer:()=>({draw(target) {
+      target.useMediaCoordinateSpace(({context:ctx,mediaSize:size})=>drawMoves({
+        ctx,size,rows,matches,view,currentOnLast,width:intervalMs[view.interval],scale:chart.timeScale(),series:candles,
+      }));
+    }}),
+  };
+  candles.attachPrimitive({
+    attached:({requestUpdate})=>{invalidateOverlays=requestUpdate;},
+    paneViews:()=>[movesOverlay,extremeOverlay],
+  });
 
   function configure(lastPrice) {
     const palette = palettes[view.theme] ?? palettes.dark;
@@ -228,19 +253,22 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       for (const kind of ['high','low']) rememberCryptoLevel(view,kind,items,matches[kind]);
     }
     byTime = new Map();
+    currentOnLast=quoteFitsLast(items.at(-1),view.currentTime??view.asOf,view.interval,exchange);
+    // An annual series can include today's still-open bar. Apply the quote only
+    // when its timestamp actually belongs to that bar; archival windows stay frozen.
+    const alignedPrice=view.historical ? (view.yearRange?view.currentPrice:null) : latestPrice;
     rows = items.map((item, index) => {
       const time = plotTime(item.time, exchange);
       let b = item;
-      if (!view.historical && index === items.length - 1 && Number.isFinite(latestPrice) && latestPrice > 0 &&
-          (view.interval!=='1m' || (view.asOf>=item.time && view.asOf<item.time+intervalMs['1m']))) {
-        b = { ...item, close: latestPrice, high: Math.max(latestPrice,item.high), low: Math.min(latestPrice,item.low) };
+      if (currentOnLast && index === items.length - 1 && Number.isFinite(alignedPrice) && alignedPrice > 0) {
+        b = { ...item, close: alignedPrice, high: Math.max(alignedPrice,item.high), low: Math.min(alignedPrice,item.low) };
       }
       const extremes = [];
       if (index === matches.high) extremes.push('high');
       if (index === matches.low) extremes.push('low');
       byTime.set(time, extremes.length ? { ...b, extremes } : b);
       return {
-        time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
+        time, epoch:item.time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
         volumeColor: extremes.length ? palette.gold : b.close >= b.open ? palette.upVolume : palette.downVolume,
         ...(extremes.length ? { color: palette.gold, wickColor: palette.gold, borderColor: palette.gold } : {}),
       };
@@ -282,6 +310,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     if (!previous.length || oldHours !== selectedHours) reset();
     if (hovered != null) onHover(byTime.get(hovered) ?? null);
     if (!last) onHover(null);
+    invalidateOverlays();
   }
 
   function selectBar(bar, price) {
@@ -319,9 +348,18 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     const b=rows[index];selectBar(b,b.close);
     return true;
   }
+  function shareBars() {
+    if(disposed || !rows.length)return [];
+    const range=chart.timeScale().getVisibleLogicalRange();
+    if(!range)return [];
+    const last=Math.min(rows.length-1,Math.floor(range.to));
+    const first=Math.max(0,Math.ceil(range.from),last-71);
+    if(first>last)return [];
+    return rows.slice(first,last+1).map(({epoch:time,open,high,low,close,volume})=>({time,open,high,low,close,volume}));
+  }
   configure();
   return {
-    update, reset, locate, focusDate,
+    update, reset, locate, focusDate, shareBars,
     destroy() {
       if (disposed) return;
       disposed = true;

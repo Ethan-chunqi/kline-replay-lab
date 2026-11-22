@@ -1,8 +1,8 @@
 import {reveal} from '../motion.js?v=20261122-market-v3';
 import {quotePerDollar,fxAsOf,fxSources} from './rates.js?v=20261122-comparisons';
-import {referenceItems} from './reference.js?v=20261122-comparisons';
+import {referenceItems} from './reference.js?v=20261122-share';
 
-import {createBundleView} from './bundle-view.js?v=20261122-comparisons';
+import {createBundleView} from './bundle-view.js?v=20261122-share';
 import {createCatalog} from './catalog.js?v=20261122-comparisons';
 
 const items=new Map(referenceItems.map(item=>[item.id,item]));
@@ -150,10 +150,10 @@ export function createEquivalent(host,t,gainKey='eqGain') {
       fx.hidden=currency===active.currency;
       const codes=[currency,active.currency].filter((c,i,arr)=>fxSources[c]&&arr.indexOf(c)===i);
       fx.replaceChildren();
-      if(currency==='USDT')fx.append(document.createTextNode('1 USDT ≈ 1 USD '));
+      if(currency==='USDT')fx.append(document.createTextNode(tr('simulationRate')+' · 1 USDT = 1 USD '));
       for(const code of codes){
         const a=document.createElement('a');a.href=fxSources[code];a.target='_blank';a.rel='noopener noreferrer';
-        a.textContent='1 USD ≈ '+quotePerDollar(code)+' '+code+' · '+fxAsOf;fx.append(a);
+        a.textContent='1 USD = '+quotePerDollar(code)+' '+code+' · '+fxAsOf;fx.append(a);
       }
     }
     caption.textContent=tr(amount>0?gainKey:'eqLoss');
@@ -170,7 +170,14 @@ export function createEquivalent(host,t,gainKey='eqGain') {
     else choose(state.exclude);
     paint();reveal(mode==='bundle'?bundleHost:main);
   });
-  return {get id(){return active?.id;},update(amount,currency,lang,symbol,exclude){
+  return {get id(){return active?.id;},snapshot(){
+    if(host.hidden||!state||!active)return {mode,services:[]};
+    if(mode==='bundle')return {mode,services:bundleView.snapshot()};
+    const {amount,currency,lang}=state;
+    const i=langIndex[lang]??0;
+    return {mode,services:[{id:active.id,title:active.title[i],quantityText:quantity(active,amount,currency,lang),
+      amountText:active.price.toLocaleString(locale[lang],{maximumFractionDigits:4})+' '+active.currency+' / '+active.unit[i]}]};
+  },update(amount,currency,lang,symbol,exclude){
     const dollars=Math.abs(usdEquivalent(amount,currency));
     host.hidden=!Number.isFinite(amount)||!Number.isFinite(dollars)||dollars===0;
     if(host.hidden){catalog.close();return;}

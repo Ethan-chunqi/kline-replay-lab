@@ -1,15 +1,17 @@
 import {equityLogos} from './equities/logos.js?v=20261122-market-v3';
 import {reveal,quoteTick} from './motion.js?v=20261122-market-v3';
-import {createPaperTrading} from './paper-trading.js?v=20261122-market-v3';
+import {createPaperTrading} from './paper-trading.js?v=20261122-share';
 import {startFeed} from './feed.js?v=20261122-market-v3';
-import {createCycleTracker} from './cycle.js?v=20261122-market-v3';
-import {createChartView} from './chart.js?v=20261122-market-v3';
-import {getCryptoBars,loadCryptoYear} from './crypto-intervals.js?v=20261122-market-v3';
+import {createCycleTracker} from './cycle.js?v=20261122-share';
+import {createChartView,findLevelIndex} from './chart.js?v=20261122-share';
+import {createShareDialog} from './share-dialog.js?v=20261122-share';
+import {createMoveVolumes,describeMoves,marketTime} from './move-context.js?v=20261122-share';
+import {getCryptoBars,loadCryptoYear,shareCycleBars,currentCryptoDay} from './crypto-intervals.js?v=20261122-share';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
 import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-market-v3';
-import {createPositions} from './positions.js?v=20261122-comparisons';
+import {createPositions} from './positions.js?v=20261122-share';
 import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-market-v3';
-import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-comparisons';
+import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-share';
 import {percent} from './metrics.js?v=20261122-market-v3';
 
 window.EQUITY_DATA_URL = 'https://raw.githubusercontent.com/Ethan-chunqi/kline-replay-lab/market-data/quotes/';
@@ -163,6 +165,7 @@ function renderRange() {
   const selected=activeInterval();
   for(const btn of all('[data-interval]')) btn.setAttribute('aria-pressed',String(btn.dataset.interval===selected));
   $('year-range').setAttribute('aria-pressed',String(yearMode));
+  $('cycle-overview').setAttribute('aria-pressed',String(historyView?.kind==='cycle'));
   const range=$('view-range');range.hidden=Boolean(historyView || locating || yearMode);
   range.replaceChildren(...rangeChoices[selected].map(([h,key])=>new Option(translate(key),String(h))));
   range.value=String(hours[selected]);
@@ -173,7 +176,80 @@ function ohlc() {
 }
 const chart=createChartView($('chart'),candle=>{hover=candle;ohlc();});
 const paperTrading=createPaperTrading($('paper-trading'),{t,localeFor,dateTime});
-const positions=createPositions($('position-panel'),{t});
+const shareDialog=createShareDialog({getModel:makeShareModel});
+const positions=createPositions($('position-panel'),{t,onShare:side=>shareDialog.open(side)});
+let volumeRecords={}, currentMoves=[];
+const volumeTracker=createMoveVolumes(()=>{if(asset && data){renderLevels();drawChart();}});
+function describeSource() {
+  return {levels,price:data.price,records:volumeRecords,asOf:data.asOf,lang,timeZone:asset.timeZone,base:isCrypto()?asset.base:''};
+}
+function renderMoves() {
+  volumeRecords=volumeTracker.update(data,isCrypto()?levels:null);
+  currentMoves=describeMoves(describeSource(),t).map(move=>({...move,durationText:ageText(lang,move.kind,move.time,data.asOf)}));
+  for(const kind of ['low','high']) {
+    const move=currentMoves.find(m=>m.kind===kind);
+    write('move-'+kind+'-percent',move?.percentText||'—');
+    write('move-'+kind+'-volume',move?.volumeText||'—');
+    write('move-'+kind+'-until',[move?.volumeBasis,move?.untilText].filter(Boolean).join(' · '));
+  }
+  $('cycle-overview').hidden=!isCrypto();
+  $('cycle-overview').disabled=!currentMoves.length;
+  document.querySelectorAll('.move-volume-line').forEach(node=>{node.hidden=!isCrypto();});
+}
+
+async function makeShareModel(side) {
+  const position=positions.snapshot(side);
+  if(!position || !levels?.low || !data?.price || !data?.asOf) return null;
+  // Freeze values before awaiting candles or volume. The market can switch while the PNG renders.
+  const source={...data}, info={...describeSource(),records:{...volumeRecords}};
+  const timezone=asset.timeZone, cryptoMarket=isCrypto(), selected=activeInterval();
+  const language=lang, themeNow=theme;
+  const marked=position.entryKind==='low'&&asset.symbol==='SOLUSDT'?translate('solLowLabel'):position.entryBasisText;
+  const labels={ '1m':'1 分钟','15m':'15 分钟','30m':'30 分钟','1h':'1 小时','1d':'日线'};
+  const title=cryptoMarket?asset.symbol:isFuture()?(data.contract||asset.symbol):assetName(asset)+' · '+asset.symbol;
+  const color=getComputedStyle(document.querySelector('[data-share-side="'+side+'"]').closest('article')).getPropertyValue('--side-accent').trim();
+  const chartBars=chart.shareBars();
+  const barContext={...chartState(),symbol:asset.symbol};
+  const starts=Math.min(...[levels.low,levels.high].filter(Boolean).map(p=>p.time));
+  let chosen=chartBars,frame=selected;
+  const asOfText=marketTime({time:source.asOf,precisionMs:1000},lang,timezone,t);
+  const model={...position,lang:language,theme:themeNow,side,symbol:title,market:[data.source,kind()].filter(Boolean).join(' · '),
+    currentPrice:data.price,currentTime:source.asOf,chartAsOf:source.asOf,timeZone:timezone,
+    asOfText,priceDigits:asset.digits||2,priceText:num(data.price)+' '+unit(),sideColor:color,
+    entryBasisText:marked,lowPriceText:num(levels.low.price)+' '+unit()};
+  const nativeWidth=({'1m':60000,'15m':900000,'30m':1800000,'1h':3600000,'1d':86400000})[selected];
+  const reachesQuote=chartBars.length && (source.asOf<chartBars.at(-1).time+nativeWidth && source.asOf>=chartBars.at(-1).time);
+  const needsHistory=cryptoMarket && (!reachesQuote || !chartBars.length || starts<chartBars[0].time);
+  const history=needsHistory?shareCycleBars(source,starts).catch(()=>[]):Promise.resolve([]);
+  const captured=Object.fromEntries(Object.entries(info.records).map(([key,record])=>[key,{result:record.result}]));
+  const waiting=Object.entries(info.records).filter(([,record])=>record.promise).map(([key,record])=>
+    record.promise.then(()=>{
+      const previous=captured[key].result;
+      if((!previous || previous.to>source.asOf || source.asOf-previous.to>900000) && record.result?.to<=source.asOf) captured[key].result=record.result;
+    }));
+  let timeout;
+  const ready=waiting.length?Promise.race([Promise.allSettled(waiting),new Promise(resolve=>{timeout=setTimeout(resolve,12000);})]):Promise.resolve();
+  const moves=ready.then(()=>describeMoves({...info,records:captured},t,false));
+  const [daily,shareMoves]=await Promise.all([history,moves]).finally(()=>clearTimeout(timeout));
+  if(daily.length){chosen=daily;frame='1d';}
+  else if(cryptoMarket && !reachesQuote){chosen=source.candles.slice(-72);frame='15m';}
+  if(!chosen.length)return null;
+  model.interval=t(language,labels[frame]);model.bars=chosen.map(b=>({...b}));
+  barContext.interval=frame;
+  if(daily.length || (cryptoMarket && !reachesQuote))barContext.sourceId=source.sourceId;
+  model.extremeTimes={};
+  for(const kind of ['high','low']){
+    const index=findLevelIndex(chosen,barContext,kind);
+    if(index>=0)model.extremeTimes[kind]=chosen[index].time;
+  }
+  model.moves=shareMoves;
+  const low=model.moves.find(m=>m.kind==='low');
+  model.lowTimeText=low?.timeText||marketTime(info.levels.low,language,timezone,t);
+  const entry=model.moves.find(m=>m.kind===position.entryKind);
+  model.entryTimeText=entry?.timeText||(position.entryAt?marketTime({time:position.entryAt,precisionMs:1000},language,'Asia/Shanghai',t):'');
+  return model;
+}
+
 function drawPositions() {
   if (!asset || !data) return;
   positions.update({symbol:asset.symbol,market:market(),type:asset.type,currency:asset.currency,base:asset.base || asset.symbol,
@@ -182,7 +258,8 @@ function drawPositions() {
 }
 function chartState() {
   return {interval:activeInterval(),market:market(),sourceId:yearMode ? yearView?.sourceId : (activeInterval()!=='1d' && data.intradaySourceId) || data.sourceId,
-    levels,asOf:data.asOf,theme,locale:lang,historical:Boolean(historyView || yearMode),yearRange:yearMode,timeZone:asset.timeZone};
+    levels,asOf:data.asOf,theme,locale:lang,historical:Boolean(historyView && historyView.kind!=='cycle' || yearMode),yearRange:yearMode || historyView?.kind==='cycle',timeZone:asset.timeZone,
+    currentPrice:data.price,currentTime:data.asOf,moves:currentMoves};
 }
 function drawChart() {
   const ctx=chartState();
@@ -286,6 +363,7 @@ function levelLabel(kind) {
   return asset.symbol==='SOLUSDT' ? 'solLowLabel' : '峰后低点';
 }
 function renderLevels() {
+  renderMoves();
   const ready=Boolean(levels?.high);
   const fixed=asset.symbol==='SOLUSDT';
   const lowLabel=document.querySelector('.low-box .level span');
@@ -299,8 +377,9 @@ function renderLevels() {
     const p=levels?.[side],btn=document.querySelector('[data-locate="'+side+'"]'),at=$(side+'-at');
     btn.disabled=!p; const pct=side==='high'?'drawdown':'rebound';
     if(!p) { for(const id of [side+'-price',side+'-at',side+'-ago',pct]) write(id,'—');at.removeAttribute('datetime');continue; }
-    write(side+'-price',num(p.price));write(side+'-at',pointTime(p));at.dateTime=new Date(p.time).toISOString();
-    at.title=pointTime(p)+' · '+asset.timeZone;
+    const move=currentMoves.find(m=>m.kind===side);
+    write(side+'-price',num(p.price));write(side+'-at',move?.timeText||marketTime(p,lang,asset.timeZone,t));at.dateTime=new Date(move?.time??p.time).toISOString();
+    at.title=at.textContent;
     const asOf = data.status==='stale' ? data.asOf : Date.now();
     write(side+'-ago',ageText(lang,side,p.time,asOf));
     write(pct,data.price ? signedPercent(percent(data.price,p.price)) : '—');
@@ -364,6 +443,14 @@ function accept(next) {
   if(isCrypto() && data.candles.length) cycle.update(data);
   if(!isCrypto()) levels=data.high?{high:data.high,low:data.low,symbol:asset.symbol,sourceId:data.sourceId,status:'ready',historyStart:data.historyStart}:null;
   renderQuote();renderLevels();
+  if(historyView?.kind==='cycle') {
+    const today=currentCryptoDay(data);
+    const last=bars.at(-1);
+    if(today && last && today.time===last.time) bars[bars.length-1]=today;
+    else if(today && last && today.time>last.time){void openCycleOverview();return;}
+    drawChart();
+    return;
+  }
   if(!data.candles.length) {drawChart();return;}
   void buildLatest();
 }
@@ -418,7 +505,7 @@ function applyAppearance() {
 function applyLanguage() {
   $('language').value=lang;applyI18n(lang);applyAppearance();rebuildAssets();renderAsset();renderRange();
   renderQuote();renderLevels();drawChart();
-  if(historyView) write('context-label',translate(levelLabel(historyView.kind))+' · '+pointTime(historyView.point));
+  if(historyView) write('context-label',historyView.kind==='cycle'?overviewLabel():translate(levelLabel(historyView.kind))+' · '+pointTime(historyView.point));
 }
 function openAsset(symbol,changeUrl=true) {
   if(!assets.has(symbol)) return;
@@ -441,6 +528,27 @@ for(const btn of all('[data-region]'))btn.addEventListener('click',()=>{
   openAsset(assets.get(last)?.region===region?last:regionDefault[region]);
 });
 for(const b of all('[data-interval]')) b.addEventListener('click',()=>switchInterval(b.dataset.interval));
+function overviewLabel() {
+  return translate(historyView.partial?'yearLimited':'cycleOverview')+' · '+dt(bars[0].time,{dateOnly:true})+' – '+dt(bars.at(-1).time,{dateOnly:true});
+}
+async function openCycleOverview() {
+  if(!isCrypto() || !currentMoves.length)return;
+  const start=Math.min(...currentMoves.map(m=>m.time));
+  discardView();const generation=version;locating='cycle';
+  $('chart-context').hidden=false;write('context-label',translate('loadingChart'));renderRange();
+  try {
+    const daily=await shareCycleBars(data,start);
+    if(version!==generation)return;
+    if(!daily.length)throw Error();
+    historyView={kind:'cycle',interval:'1d',partial:daily[0].time>Math.floor(start/DAY)*DAY};bars=daily;locating=null;
+    write('context-label',overviewLabel());
+    renderRange();drawChart();chart.reset();
+  } catch {
+    if(version!==generation)return;
+    locating=null;write('context-label',translate('没有可用的 K 线'));renderRange();void buildLatest();
+  }
+}
+$('cycle-overview').addEventListener('click',()=>{if(historyView?.kind==='cycle')switchInterval(interval,false);else void openCycleOverview();});
 for(const b of all('[data-locate]')) b.addEventListener('click',()=>{
   document.querySelector('.chart-card').scrollIntoView({block:'start'});
   void locate(b.dataset.locate);

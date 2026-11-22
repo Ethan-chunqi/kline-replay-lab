@@ -1,5 +1,5 @@
 import {buildBundle} from './bundle.js?v=20261122-comparisons';
-import {referenceItems} from './reference.js?v=20261122-comparisons';
+import {referenceItems} from './reference.js?v=20261122-share';
 const languages={zh:0,en:1,ja:2,ru:3,ko:4};
 const locales={zh:'zh-CN',en:'en-US',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
 
@@ -7,7 +7,7 @@ export function createBundleView(host,t) {
   host.innerHTML='<ul class="bundle-list"></ul><div class="bundle-total"><span></span><strong></strong></div><small class="bundle-note"></small>';
   const list=host.querySelector('ul'), total=host.querySelector('.bundle-total strong');
   const label=host.querySelector('.bundle-total span'), note=host.querySelector('.bundle-note');
-  let previous='', structure='', rows=[];
+  let previous='', structure='', rows=[], services=[];
   function update(state,variant) {
     const {amount,currency,lang}=state, key=[Math.abs(amount).toFixed(2),currency,lang,variant].join('|');
     if(previous===key) return;
@@ -39,11 +39,12 @@ export function createBundleView(host,t) {
         row.append(picture,body);list.append(row);rows.push({quantity,cost});
       }
     }
-    bundle.lines.forEach((line,i)=>{
+    services=bundle.lines.map((line,i)=>{
       const value=(line.measured?weight:integers).format(line.quantity)+' '+line.item.unit[language];
       const subtotal=money(line.amount);
       if(rows[i].quantity.textContent!==value) rows[i].quantity.textContent=value;
       if(rows[i].cost.textContent!==subtotal) rows[i].cost.textContent=subtotal;
+      return {id:line.item.id,title:line.item.title[language],quantityText:value,amountText:subtotal};
     });
     label.textContent=t(lang,'bundleTotal');
     total.textContent=money(bundle.total);
@@ -51,5 +52,5 @@ export function createBundleView(host,t) {
     note.hidden=!remainder && bundle.total>0;
     note.textContent=t(lang,remainder?'bundleRemainder':'bundleTiny',{currency});
   }
-  return {update};
+  return {update,snapshot:()=>services.map(line=>({...line}))};
 }

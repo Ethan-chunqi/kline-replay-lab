@@ -1,7 +1,7 @@
 import {perpetualSources,bitgetPath,venueNames} from './perpetuals.js?v=20261122-market-v3';
 import {quotePerDollar,fxAsOf} from './equivalents/rates.js?v=20261122-market-v3';
-import { createEquivalent } from './equivalents/view.js?v=20261122-comparisons';
-import { createBankComparison } from './bank.js?v=20261122-comparisons';
+import { createEquivalent } from './equivalents/view.js?v=20261122-share';
+import { createBankComparison } from './bank.js?v=20261122-share';
 import { parseAmount, readPrincipal } from './metrics.js?v=20261122-market-v3';
 
 const storageKey = 'market-positions-v1';
@@ -45,12 +45,16 @@ function field(id,caption,unit) {
 }
 const details = [
   ['margin','principalLabel'], ['leverage','杠杆倍数'], ['notional','入场名义金额'], ['quantity','持仓数量'],
-  ['value','当前持仓价值'], ['entry','参考开仓价'], ['mark','标记价格'], ['liquidation','预计强平价'],
+  ['value','当前持仓价值'], ['entry','参考开仓价'], ['mark','标记价格'], ['liquidation','liquidation'],
   ['contract','合约'], ['multiplier','合约乘数'], ['tick','最小变动价位'], ['point-value','每点盈亏'],
   ['tick-value','每跳盈亏'], ['margin-used','目前保证金占用'],
 ];
 function detailsToggle() {
   return '<summary><span class="when-closed">' + label('positionDetails') + '</span><span class="when-open">' + label('hidePositionDetails') + '</span></summary>';
+}
+
+function shareButton(side) {
+  return '<button type="button" class="position-share" data-share-side="'+side+'"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>'+label('shareCard')+'</button>';
 }
 
 function cycleDetails(short) {
@@ -74,7 +78,7 @@ function card(side) {
     '<div class="position-metrics"><div>' + label('returnOnCapital') + ' <b id="' + side + '-roi">—</b></div><div>' +
     label(short?'priceDrawdown':'priceRebound') + ' <b id="' + (short?'drawdown':'rebound') + '">—</b></div></div>' +
     '<div class="value-equivalent" hidden></div><p class="position-risk" id="' + side + '-risk" hidden></p>' +
-    '<details class="position-details">' + detailsToggle() + cycleDetails(short) + '<dl class="position-table">' + rows + '</dl></details></article>';
+    '<details class="position-details">' + detailsToggle() + cycleDetails(short) + '<dl class="position-table">' + rows + '</dl></details>'+shareButton(side)+'</article>';
 }
 
 // One-way linear, isolated simulation. Maintenance is a fixed reference share
@@ -133,7 +137,7 @@ async function venueMark(symbol,sourceId,signal) {
   return null;
 }
 
-export function createPositions(host,{t}) {
+export function createPositions(host,{t,onShare}) {
   host.innerHTML = '<div class="calc-grid"><div class="calc-controls"><div class="amount-row" id="capital-row">' + field('capital','principalLabel','capital') +
     '<label class="leverage position-field">' + label('杠杆倍数') + '<select id="leverage">' +
     leverages.map(l => '<option value="' + l + '">' + l + '×</option>').join('') + '</select></label></div>' +
@@ -143,7 +147,11 @@ export function createPositions(host,{t}) {
     '<p id="input-error" role="status" hidden></p></div>' + card('long') + card('short') +
     '<article class="result bank-comparison"></article></div><p class="position-quote"></p><p class="calc-note position-note"></p>';
   const equivalents=Object.fromEntries(['short','long'].map(side=>[side,createEquivalent(host.querySelector('.result-'+side+' .value-equivalent'),t)]));
-  const bank=createBankComparison(host.querySelector('.bank-comparison'),{t,num,detailsToggle,readAmount:(text,lang)=>readPrincipal(text,lang,'CNY')});
+  const bank=createBankComparison(host.querySelector('.bank-comparison'),{t,num,detailsToggle,shareButton,readAmount:(text,lang)=>readPrincipal(text,lang,'CNY')});
+  const shareValues={};
+  for(const button of host.querySelectorAll('[data-share-side]')){
+    button.addEventListener('click',()=>onShare(button.dataset.shareSide));
+  }
   const elements = new Map([...host.querySelectorAll('[id]')].map(el => [el.id,el]));
   const el = id => elements.get(id);
   const write = (id,v) => { if (el(id).textContent !== v) el(id).textContent = v; };
@@ -274,12 +282,12 @@ export function createPositions(host,{t}) {
     const estimate = hasMark ? mark.price : future && !contract ? null : state.lastPrice;
     const asOf = hasMark ? mark.asOf : state.asOf;
     const stale = ['stale','offline'].includes(state.status) || (crypto && (!asOf || Date.now()-asOf >= QUOTE_FRESH));
-    const basisLabel = hasMark ? '交易所标记价' : stale ? '快照成交价估算' : '最新成交价估算';
+    const basisLabel = hasMark ? '交易所标记价' : stale ? 'estimateBySnapshot' : 'estimateByLast';
     const venue = hasMark ? venueNames[sourceId] + ' · ' : '';
     quote.textContent = POSITIVE(estimate) ? venue + tr(basisLabel) + ' · ' + clock(asOf) : tr('等待报价');
     note.textContent = future ? [tr('officialCollateralNote'),tr('每点及每跳盈亏以价格上涨为例。')].join(' ') :
       crypto ? tr('simLiquidationNote') :
-      (market==='kr' ? '1 USDT ≈ '+num(lang,quotePerDollar('KRW'),2)+' KRW · '+fxAsOf+' · ' : market === 'us' ? tr('美股本金以 USDT 输入，按 1 USDT = 1 USD 模拟，盈亏以美元显示。') + ' ' : '') + tr('证券和指数按模拟敞口计算，不含成本。');
+      (market==='kr' ? tr('simulationRate')+' · 1 USDT = '+num(lang,quotePerDollar('KRW'),2)+' KRW · '+fxAsOf+' · ' : market === 'us' ? tr('美股本金以 USDT 输入，按 1 USDT = 1 USD 模拟，盈亏以美元显示。') + ' ' : '') + tr('证券和指数按模拟敞口计算，不含成本。');
     const money = v => Number.isFinite(v) ? num(lang,v,2,2) + ' ' + currency : '—';
     const price = v => Number.isFinite(v) ? num(lang,v,digits,digits) + ' ' + priceUnit : '—';
     const cert = state.levels?.sourceId && state.levels.sourceId === sourceId && state.levels.symbol === symbol &&
@@ -315,6 +323,12 @@ export function createPositions(host,{t}) {
       equivalents[side].update(result?.profit,currency,lang,symbol,equivalents[side==='short'?'long':'short'].id);
       write(side+'-pnl',signed(result?.profit));
       write(side+'-roi',Number.isFinite(result?.roe) ? signed(result.roe)+'%' : '—');
+      shareValues[side]=Number.isFinite(result?.profit) ? {
+        pnl:result.profit,pnlText:signed(result.profit)+' '+currency,roiText:el(side+'-roi').textContent,
+        capitalText:el(side+'-margin').textContent,leverageText:future?'':leverage+'×',lotsText:future?num(lang,lots)+' '+tr('手'):'',
+        entryNotionalText:money(amount),entryPriceText:price(entry),entryBasisText:custom?tr('shareEntryCustom'):tr(dir>0?'峰后低点':'历史高点'),
+        entryKind:custom?'custom':dir>0?'low':'high',asOf,markPriceText:price(estimate),markLabel:tr(basisLabel)
+      }:null;
       for (const name of ['pnl','roi']) el(side+'-'+name).dataset.tone = !Number.isFinite(result?.profit) || result.profit === 0 ? 'neutral' : result.profit > 0 ? 'positive':'negative';
       if (crypto) {
         write(side+'-liquidation',result?.liquidation === 0 ? tr('无正数强平价') : price(result?.liquidation));
@@ -389,7 +403,10 @@ export function createPositions(host,{t}) {
   const clockTimer = setInterval(() => { if (!document.hidden) refresh(); },2000);
   document.addEventListener('visibilitychange',refresh);
   draw();
-  return {update,refresh,destroy(){
+  return {update,refresh,snapshot(side){
+    if(side==='savings') return bank.snapshot();
+    return shareValues[side] ? {...shareValues[side],...equivalents[side].snapshot()} : null;
+  },destroy(){
     disposed = true; bank.destroy(); pending?.abort(); clearInterval(clockTimer); document.removeEventListener('visibilitychange',refresh);
   }};
 }

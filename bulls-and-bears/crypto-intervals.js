@@ -15,11 +15,11 @@ function memo(key, task) {
   return cache.get(key);
 }
 
-async function json(url) {
+async function json(url, signal) {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 6500);
   try {
-    const response = await fetch(url, { credentials: 'omit', signal: abort.signal });
+    const response = await fetch(url, { credentials: 'omit', signal: signal ? AbortSignal.any([signal,abort.signal]) : abort.signal });
     if (!response.ok) throw new Error('Market data request failed');
     return await response.json();
   } finally { clearTimeout(timer); }
@@ -55,10 +55,10 @@ function rolled(candles, width) {
   return result;
 }
 
-async function nativeBars(state, interval, start, end, count) {
+async function nativeBars(state, interval, start, end, count, signal) {
   const { symbol, sourceId } = state;
   if(!perpetualSources[symbol]?.includes(sourceId))throw Error('Unverified contract source');
-  if(sourceId==='bitget-usdt')return barsFrom(await bitgetKlines(symbol,interval,start,end,count,json),intervalMs[interval]);
+  if(sourceId==='bitget-usdt')return barsFrom(await bitgetKlines(symbol,interval,start,end,count,url=>json(url,signal)),intervalMs[interval]);
   const binance = sourceId === 'binance-usdm';
   const q = new URLSearchParams({ symbol, limit: String(count) });
   if (binance) {
@@ -72,8 +72,9 @@ async function nativeBars(state, interval, start, end, count) {
     if (start != null) q.set('start', String(start));
   }
   for (const host of hosts[sourceId]) {
+    signal?.throwIfAborted();
     try {
-      const raw = await json(host + (binance ? '/fapi/v1/klines?' : '/v5/market/kline?') + q);
+      const raw = await json(host + (binance ? '/fapi/v1/klines?' : '/v5/market/kline?') + q,signal);
       if (binance) {
         if (!Array.isArray(raw) || raw.some(r => +r[6] - +r[0] + 1 !== intervalMs[interval])) throw Error();
         return barsFrom(raw, intervalMs[interval]);
@@ -85,10 +86,10 @@ async function nativeBars(state, interval, start, end, count) {
   throw new Error('Historical candlesticks unavailable');
 }
 
-function bundledDays(state) {
+function bundledDays(state, suffix = '') {
   const { symbol, sourceId } = state;
-  return memo('bundle/' + symbol + '/' + sourceId, async () => {
-    const data = await json(new URL('./daily/' + symbol + '-' + sourceId + '.json', import.meta.url));
+  return memo('bundle/' + symbol + '/' + sourceId + suffix, async () => {
+    const data = await json(new URL('./daily/' + symbol + '-' + sourceId + suffix + '.json', import.meta.url));
     if (data.market !== 'perpetual' || data.symbol !== symbol || data.sourceId !== sourceId || data.interval !== '1d') throw Error('Invalid market');
     return barsFrom(data.rows, day).filter(b => b.time + day - 1 <= data.asOf);
   });
@@ -165,15 +166,18 @@ function rememberedBars(state, interval, p, kind) {
   } catch { return null; }
 }
 
-async function bundledWindow(state, interval, p, kind) {
-  if (kind !== 'high' && kind !== 'low') return null;
+function extremeData(state,kind) {
   const { symbol,sourceId } = state;
   const key = [symbol,sourceId,kind,'extreme-window'].join('/');
-  const data = await memo(key, async () => {
+  return memo(key, async () => {
     const result = await json(new URL('./extreme-windows/' + symbol + '-' + sourceId + '-' + kind + '.json', import.meta.url));
     if (result.symbol !== symbol || result.sourceId !== sourceId || result.kind !== kind || result.market !== 'perpetual') throw Error('Invalid market');
     return result;
   });
+}
+async function bundledWindow(state, interval, p, kind) {
+  if (kind !== 'high' && kind !== 'low') return null;
+  const data=await extremeData(state,kind);
   const base = interval === '1m' ? '1m' : interval === '1d' ? '1d' : '15m';
   const native = barsFrom(data.windows[base],intervalMs[base]);
   const end = Math.min(state.asOf + 1,native.at(-1).time + intervalMs[base]);
@@ -434,4 +438,69 @@ async function minuteDay(state,selected,signal) {
   signal?.throwIfAborted();
   return {symbol:state.symbol,sourceId:state.sourceId,source:venueNames[state.sourceId],candles,interval:'1m',
     coverage:'day',dateRange:{first:'2026-01-01',last,selected:date},asOf:Math.min(state.asOf,candles.at(-1).time+minute-1)};
+}
+
+const sharePrefixContracts=new Set(['SOLUSDT/binance-usdm','SOLUSDT/bybit-linear','BGBUSDT/bitget-usdt']);
+
+export function currentCryptoDay(state) {
+  const open=Math.floor(state.asOf/day)*day;
+  return rolled(state.candles.filter(bar=>bar.time>=open && bar.time<=state.asOf),day)[0];
+}
+
+// Share only a continuous same-contract sequence ending at the frozen quote.
+// The current UTC day is rolled from that capture's 15m candles, never from a later daily close.
+export async function shareCycleBars(state,startTime) {
+  if(state?.market!=='perpetual' || !perpetualSources[state.symbol]?.includes(state.sourceId) ||
+     !Number.isSafeInteger(startTime) || !Number.isSafeInteger(state.asOf) ||
+     startTime>state.asOf || !state.candles?.length) return [];
+  const from=Math.floor(startTime/day)*day, end=Math.floor(state.asOf/day)*day;
+  const available=state.candles.filter(b=>b.time<=state.asOf);
+  if(!available.length || Math.floor(available.at(-1).time/day)*day!==end) return [];
+  let i=available.length-1;
+  while(i>0 && available[i].time===available[i-1].time+quarter) i--;
+  const observed=rolled(available.slice(i),day);
+  if(!observed.length || observed.at(-1).time!==end) return [];
+
+  const known=new Map();
+  function addClosed(items) {
+    for(const bar of items) if(bar.time>=from && bar.time<end)known.set(bar.time,bar);
+  }
+  const jobs=[bundledDays(state).then(addClosed)];
+  if(end-from>350*day) {
+    jobs.push(extremeData(state,'high').then(data=>{
+      addClosed(barsFrom(data.windows['1d'],day).filter(b=>b.time+day-1<=data.asOf));
+    }));
+    if(sharePrefixContracts.has(state.symbol+'/'+state.sourceId)) jobs.push(bundledDays(state,'-share-prefix').then(addClosed));
+  }
+  await Promise.allSettled(jobs);
+  for(const bar of observed)if(bar.time>=from)known.set(bar.time,bar);
+  const result=[];
+  let cursor=end;
+  function takeKnown() {
+    while(cursor>=from && known.has(cursor)) {
+      result.push(known.get(cursor));cursor-=day;
+    }
+  }
+  takeKnown();
+  // A saved site can lag behind the live feed. Fill the most recent missing days first,
+  // only caching complete immutable pages. Share a real partial range if a venue is offline.
+  if(cursor>=from && globalThis.navigator?.onLine!==false) {
+    const deadline=AbortSignal.timeout(5500);
+    for(let page=0;page<4 && cursor>=from && !deadline.aborted;page++){
+      const stop=cursor+day;
+      const max=state.sourceId==='bitget-usdt'?85:400;
+      let start=cursor;
+      while(start>from && (stop-start)/day<max && !known.has(start-day))start-=day;
+      const key=['share-days',state.symbol,state.sourceId,start,stop].join('/');
+      try {
+        const data=await memo(key,async()=>{
+          const rows=await nativeBars(state,'1d',start,stop-1,(stop-start)/day,deadline);
+          if(rows[0]?.time!==start || rows.at(-1)?.time!==stop-day)throw Error('Incomplete daily window');
+          return rows;
+        });
+        addClosed(data);takeKnown();
+      } catch {break;}
+    }
+  }
+  return result.reverse();
 }
