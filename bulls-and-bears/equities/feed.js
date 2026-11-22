@@ -6,6 +6,8 @@ const localRoot = new URL('./', import.meta.url);
 const byId = new Map(equityCatalog.map(asset => [asset.symbol, asset]));
 const intervals = new Map([['1m',1],['15m',15],['30m',30],['1h',60],['1d',1440]]);
 const recent = new Map();
+// A share may outlive its quote in the live cache while the viewer switches layouts.
+const rawForCycle = new WeakMap();
 const hour = 3600000;
 const day = 24 * hour;
 const quarter = hour / 4;
@@ -122,6 +124,7 @@ function sessionState(meta, raw, interval) {
   const session = stateOfSession(meta,raw);
   const krHours=raw && meta.region==='kr' ? koreanHours(wall(raw.tradeDay,meta.timeZone).date) : null;
   const levels = raw ? { symbol:meta.symbol, sourceId:raw.sourceId, high:raw.high, low:raw.low, asOf:raw.asOf, status:'verified' } : null;
+  if(levels)rawForCycle.set(levels,raw);
   return {
     symbol:meta.symbol, interval, market:'equity', currency:meta.currency, timeZone:meta.timeZone,
     priceUnit:meta.type==='index'?'点':meta.currency, volumeUnit:meta.region==='cn'?'手':meta.type==='index'?'成交量':'股',
@@ -332,7 +335,7 @@ export async function loadEquityWindow(symbol,interval,pointTime,signal) {
 }
 
 export function captureEquityFrame(snapshot,frame) {
-  const meta=byId.get(snapshot.symbol),raw=recent.get(snapshot.symbol);
+  const meta=byId.get(snapshot.symbol),raw=rawForCycle.get(snapshot.cycle)??recent.get(snapshot.symbol);
   if(!meta || !raw || !intervals.has(frame) || raw.asOf!==snapshot.asOf || raw.generatedAt!==snapshot.generatedAt ||
      raw.sourceId!==(snapshot.cycle?.sourceId||snapshot.executionSourceId||snapshot.sourceId))return null;
   const view=sessionState(meta,raw,frame);

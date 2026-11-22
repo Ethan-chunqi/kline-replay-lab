@@ -1,6 +1,6 @@
 import {getCryptoBars,shareCycleBars,intervalMs} from './crypto-intervals.js?v=20261122-share';
-import {captureEquityFrame,loadEquityWindow} from './equities/feed.js?v=20261122-trails';
-import {captureFutureFrame} from './futures/feed.js?v=20261122-trails';
+import {captureEquityFrame,loadEquityWindow} from './equities/feed.js?v=20261122-frozen-equity';
+import {captureFutureFrame} from './futures/feed.js?v=20261122-frozen-future';
 import {loadEquityYear} from './equities/year.js?v=20261122-market-v3';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
 

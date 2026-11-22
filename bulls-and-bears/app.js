@@ -7,13 +7,13 @@ import {createChartView,findLevelIndex} from './chart.js?v=20261122-minute-foote
 import {movesForInterval} from './chart-moves.js?v=20261122-editorial';
 import {createShareDialog} from './share-dialog.js?v=20261122-two-cards';
 import {createRocketDialog} from './rocket-dialog.js?v=20261122-editorial';
-import {positionShareBars} from './share-bars.js?v=20261122-trails';
+import {positionShareBars} from './share-bars.js?v=20261122-pinned-frames';
 import {createMoveVolumes,describeMoves,marketTime} from './move-context.js?v=20261122-share';
 import {getCryptoBars,loadCryptoYear,shareCycleBars,currentCryptoDay} from './crypto-intervals.js?v=20261122-share';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
-import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-trails';
+import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-frozen-equity';
 import {createPositions} from './positions.js?v=20261122-two-cards';
-import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-trails';
+import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-frozen-future';
 import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-two-cards';
 import {percent} from './metrics.js?v=20261122-market-v3';
 

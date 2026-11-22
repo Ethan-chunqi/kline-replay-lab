@@ -5,6 +5,9 @@ const localRoot = new URL('./',import.meta.url);
 const products = new Map(futureCatalog.map(p => [p.symbol,p]));
 const frames = new Map([['1m',1],['15m',15],['30m',30],['1h',60],['1d',1440]]);
 const cache = new Map();
+// A share can stay open after another poll or a main-month rollover. A frozen
+// quote's cycle keeps only its own raw snapshot alive for that lifetime.
+const quoteVersions = new WeakMap();
 const minute = 60000;
 const hour = 60*minute;
 const day = 24*hour;
@@ -37,6 +40,10 @@ function aggregate(a,count) {
     }
   }
   return result;
+}
+function frameCandles(raw,frame) {
+  const rows=frame==='1m'?(validRows(raw.minuteBars)?raw.minuteBars:[]):frame==='1d'?raw.days:raw.intraday;
+  return aggregate(rows,frames.get(frame));
 }
 function session(raw) {
   if (!raw) return 'unknown';
@@ -77,6 +84,7 @@ async function get(url,signal) {
 function compose(p,raw,frame) {
   const state=session(raw);
   const cycle=raw?{symbol:p.symbol,sourceId:raw.sourceId,contract:raw.contract,high:raw.high,low:raw.low,asOf:raw.asOf,status:'verified'}:null;
+  if(cycle)quoteVersions.set(cycle,raw);
   return {...p,interval:frame,status:raw?'snapshot':'loading',error:'',priceUnit:'点',volumeUnit:'手',asOf:raw?.asOf??null,
     source:raw?.source || '',sourceId:raw?.sourceId||'',price:raw?.price??null,contract:raw?.contract||'',
     dayHigh:raw?.dayHigh??null,dayLow:raw?.dayLow??null,tradeDay:raw?.tradeDay??null,generatedAt:raw?.generatedAt??null,
@@ -89,7 +97,7 @@ function compose(p,raw,frame) {
     volume:raw?.volume??null,openInterest:raw?.openInterest??null,barSource:frame==='1m'?'新浪期货':raw?.barSource||'',dailySource:raw?.dailySource||'',
     session:state,sessionLabel:({closed:'已收盘',open:'盘中 · 延时报价',break:'午间休市',unknown:'历史报价 · 待更新'})[state],
     high:raw?.high??null,low:raw?.low??null,cycle,historyStart:raw?.historyStart??null,
-    candles:raw?aggregate(frame==='1m'?(validRows(raw.minuteBars)?raw.minuteBars:[]):frame==='1d'?raw.days:raw.intraday,frames.get(frame)):[],
+    candles:raw?frameCandles(raw,frame):[],
     sessionCandles:raw?raw.intraday.filter(r=>r[0]*1000>=raw.tradeDay).map(candle):[]};
 }
 async function quoteTick(raw,signal) {
@@ -168,7 +176,7 @@ export async function loadFutureWindow(symbol,frame,pointTime,signal) {
     }
   }
   if (!raw || signal?.aborted)return [];
-  const rows=aggregate(frame==='1m'?(validRows(raw.minuteBars)?raw.minuteBars:[]):frame==='1d'?raw.days:raw.intraday,frames.get(frame));
+  const rows=frameCandles(raw,frame);
   const idx=frame==='1d'?rows.findIndex(r=>cnDate(r.time)===cnDate(pointTime)):
     rows.findIndex(r=>r.time<=pointTime && r.time+frames.get(frame)*minute>pointTime);
   if (idx<0)return [];
@@ -176,8 +184,9 @@ export async function loadFutureWindow(symbol,frame,pointTime,signal) {
 }
 
 export function captureFutureFrame(snapshot,frame) {
-  const product=products.get(snapshot.symbol),raw=cache.get(snapshot.symbol);
+  const product=products.get(snapshot.symbol),raw=quoteVersions.get(snapshot.cycle)??cache.get(snapshot.symbol);
   if(!product || !raw || !frames.has(frame) || raw.asOf!==snapshot.asOf || raw.generatedAt!==snapshot.generatedAt ||
-     raw.contract!==snapshot.contract || raw.sourceId!==snapshot.sourceId)return null;
-  return {candles:compose(product,raw,frame).candles,sourceId:raw.sourceId,barSource:raw.barSource};
+     raw.symbol!==snapshot.symbol || raw.contract!==snapshot.contract || raw.sourceId!==snapshot.sourceId)return null;
+  const candles=frameCandles(raw,frame).filter(bar=>bar.time<=snapshot.asOf);
+  return {candles,sourceId:raw.sourceId,barSource:frame==='1d'?raw.dailySource:frame==='1m'?'新浪期货':raw.barSource};
 }
