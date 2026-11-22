@@ -3,7 +3,7 @@ import {reveal,quoteTick} from './motion.js?v=20261122-market-v3';
 import {createPaperTrading} from './paper-trading.js?v=20261122-share';
 import {startFeed} from './feed.js?v=20261122-market-v3';
 import {createCycleTracker} from './cycle.js?v=20261122-share';
-import {createChartView,findLevelIndex} from './chart.js?v=20261122-editorial';
+import {createChartView,findLevelIndex} from './chart.js?v=20261122-minute-footer';
 import {movesForInterval} from './chart-moves.js?v=20261122-editorial';
 import {createShareDialog} from './share-dialog.js?v=20261122-editorial-2';
 import {createRocketDialog} from './rocket-dialog.js?v=20261122-editorial';
@@ -178,7 +178,13 @@ function ohlc() {
   const candle=hover || bars.at(-1);
   for(const id of ['open','high','low','close']) write(id,candle ? num(candle[id]) : '—');
 }
-const chart=createChartView($('chart'),candle=>{hover=candle;ohlc();});
+function renderMinuteRange(range) {
+  if (!asset || !data || activeInterval()!=='1m' || yearMode) return;
+  $('bar-source').hidden=!range;
+  const source=isCrypto()?data.source:translate(data.barSource || data.source);
+  write('bar-source',range?[source,dt(range.from),dt(range.to)].filter(Boolean).join(' · '):'');
+}
+const chart=createChartView($('chart'),candle=>{hover=candle;ohlc();},{onMinuteRange:renderMinuteRange});
 const paperTrading=createPaperTrading($('paper-trading'),{t,localeFor,dateTime});
 const shareDialog=createShareDialog({getModel:makeShareModel});
 const rocketDialog=createRocketDialog({getModel:signal=>makeShareModel('long',{chartOnly:true,signal})});
@@ -267,11 +273,9 @@ function chartState() {
 function drawChart() {
   const ctx=chartState();
   const barSource=ctx.interval==='1d'?data.dailySource:data.barSource;
-  $('bar-source').hidden=yearMode || (asset.group!=='cn-ai' && (!isFuture() || !barSource));
-  write('bar-source',asset.group==='cn-ai' ? translate(ctx.interval==='1d'?'stockAdjusted':'stockUnadjusted') : isFuture() && barSource ? (barSource==='新浪期货' && lang!=='zh'?'Sina Finance':translate(barSource)) : '');
-  if(ctx.interval==='1m' && !yearMode && bars.length) {
-    $('bar-source').hidden=false;
-    write('bar-source',[isCrypto()?data.source:translate(barSource || data.source),dt(bars[0].time),dt(bars.at(-1).time)].filter(Boolean).join(' · '));
+  if(ctx.interval!=='1m' || yearMode) {
+    $('bar-source').hidden=yearMode || (asset.group!=='cn-ai' && (!isFuture() || !barSource));
+    write('bar-source',asset.group==='cn-ai' ? translate(ctx.interval==='1d'?'stockAdjusted':'stockUnadjusted') : isFuture() && barSource ? (barSource==='新浪期货' && lang!=='zh'?'Sina Finance':translate(barSource)) : '');
   }
   chart.update(bars,hours[ctx.interval],ctx.historical?null:data.price,asset.symbol,ctx);
   $('chart-empty').hidden=bars.length>0 && !chartError;

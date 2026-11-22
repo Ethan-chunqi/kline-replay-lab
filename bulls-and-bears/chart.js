@@ -106,7 +106,7 @@ function sameBar(a, b) {
 }
 function volumeBar(b) { return { time: b.time, value: b.volume, color: b.volumeColor }; }
 
-export function createChartView(container, onHover = () => {}, options = {}) {
+export function createChartView(container, onHover = () => {}, {onMinuteRange = () => {}, ...options} = {}) {
   const defaults = { symbol: 'BTCUSDT', market: 'perpetual', interval: '15m', sourceId: '', theme: 'dark', locale: 'zh', ...options };
   let view = defaults;
   let styleKey = '';
@@ -255,6 +255,26 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     onHover(byTime.get(hovered) ?? null);
   }
   chart.subscribeCrosshairMove(hover);
+  function reportMinuteRange() {
+    if (disposed || view.interval !== '1m' || view.yearRange) return;
+    const scale = chart.timeScale();
+    const width = scale.width();
+    const left = scale.coordinateToLogical(0), right = scale.coordinateToLogical(width);
+    if (!width || !rows.length || left == null || right == null) return onMinuteRange(null);
+    // A bar under the boundary can have its wick outside the plotting area.
+    let first = Math.max(0, left), last = Math.min(rows.length - 1, right);
+    if (scale.logicalToCoordinate(first) < 0) first++;
+    if (scale.logicalToCoordinate(last) > width) last--;
+    onMinuteRange(first <= last ? {from:rows[first].epoch, to:rows[last].epoch} : null);
+  }
+  let rangeFrame = 0;
+  function scheduleMinuteRange() {
+    if (view.interval !== '1m' || view.yearRange || rangeFrame || disposed) return;
+    // Range and size events can fire before the chart has finished laying out its axes.
+    rangeFrame = requestAnimationFrame(() => { rangeFrame = 0; reportMinuteRange(); });
+  }
+  chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleMinuteRange);
+  chart.timeScale().subscribeSizeChange(scheduleMinuteRange);
 
   function update(items, windowHours = 24, latestPrice = null, symbol = view.symbol, context = {}) {
     if (disposed) return;
@@ -334,6 +354,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       else line = candles.createPriceLine({ ...opts, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
     }
     if (resetRange) reset();
+    scheduleMinuteRange();
     if (hovered != null) onHover(byTime.get(hovered) ?? null);
     if (!last) onHover(null);
     invalidateOverlays();
@@ -393,6 +414,9 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       motion.removeEventListener('change',resetTrailAnimation);
       document.removeEventListener('visibilitychange',resetTrailAnimation);
       chart.unsubscribeCrosshairMove(hover);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleMinuteRange);
+      chart.timeScale().unsubscribeSizeChange(scheduleMinuteRange);
+      cancelAnimationFrame(rangeFrame);
       chart.remove();
       byTime.clear();
       rows = [];
