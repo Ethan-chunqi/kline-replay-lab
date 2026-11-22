@@ -331,6 +331,15 @@ export async function loadEquityWindow(symbol,interval,pointTime,signal) {
   return [];
 }
 
+export function captureEquityFrame(snapshot,frame) {
+  const meta=byId.get(snapshot.symbol),raw=recent.get(snapshot.symbol);
+  if(!meta || !raw || !intervals.has(frame) || raw.asOf!==snapshot.asOf || raw.generatedAt!==snapshot.generatedAt ||
+     raw.sourceId!==(snapshot.cycle?.sourceId||snapshot.executionSourceId||snapshot.sourceId))return null;
+  const view=sessionState(meta,raw,frame);
+  const sourceId=frame==='1d'?raw.sourceId:frame==='1m'?raw.minuteSourceId:raw.intradaySourceId;
+  return {candles:view.candles,sourceId:sourceId||raw.sourceId};
+}
+
 export async function loadAiCaps(onData, region='cn') {
   const aiSymbols = new Set(equityCatalog.filter(a=>a.group===region+'-ai').map(a=>a.symbol));
   if (!['cn','kr'].includes(region))return;

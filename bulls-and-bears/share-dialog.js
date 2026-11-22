@@ -1,4 +1,4 @@
-import {renderSharePoster} from './share-poster.js?v=20261122-share';
+import {renderSharePoster} from './share-poster.js?v=20261122-trails';
 
 const copy = {
   zh: {

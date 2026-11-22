@@ -1,4 +1,6 @@
 // Rasterize the captured position and OHLC data in the browser. Only first-party images are loaded.
+import {drawMoveTrail,moveTrailColor} from './move-trails.js?v=20261122-trails';
+
 const words = {
   zh: ['你的持仓','做多','做空','理财','未实现盈亏','累计利息','本金收益率','本金','杠杆','K 线','报价','周期低点','低点时间','开仓金额','参考开仓价','开仓基准','开仓时间','购买力换算','单一服务','配套服务','扫码查看行情','投入金额','起息时间','数据时间','年化利率'],
   en: ['Your positions','Long','Short','Savings','Unrealized P&L','Interest earned','Return on capital','Capital','Leverage','Candles','Quote','Cycle low','Time of low','Entry notional','Entry price','Entry basis','Entry time','Purchasing power','Single item','Bundle','Scan for the market','Amount invested','Interest start','Quote as of','Annual rate'],
@@ -7,6 +9,13 @@ const words = {
   ko: ['내 포지션','롱','숏','자산 관리','미실현 손익','누적 이자','원금 수익률','원금','레버리지','캔들','시세','사이클 저점','저점 시각','진입 금액','진입 가격','진입 기준','진입 시각','구매력 환산','단일','패키지','시세 확인하기','투입 금액','이자 시작일','시세 시각','연 수익률'],
 };
 const fields=['positions','long','short','savings','pnl','interest','return','capital','leverage','candles','quote','low','lowTime','notional','entryPrice','basis','entryTime','power','single','bundle','scan','investment','interestStart','asOf','rate'];
+const tradeCopy={
+  zh:['买入价（周期低点）','卖出价（周期高点）','买入时间','卖出时间','自定义买入价','自定义卖出价','手数','开仓保证金'],
+  en:['Buy price · cycle low','Sell price · cycle high','Buy time','Sell time','Custom buy price','Custom sell price','Lots','Opening margin'],
+  ja:['買値（サイクル安値）','売値（サイクル高値）','買付日時','売付日時','指定買値','指定売値','取引枚数','当初証拠金'],
+  ru:['Цена покупки · минимум','Цена продажи · максимум','Время покупки','Время продажи','Своя цена покупки','Своя цена продажи','Лоты','Начальная маржа'],
+  ko:['매수가 · 주기 저점','매도가 · 주기 고점','매수 시각','매도 시각','지정 매수가','지정 매도가','계약 수','개시 증거금'],
+};
 const chartCopy={
   zh:['低点 → 当前','高点 → 当前','区间成交量','图外时点','每柱含 {n} 根 K 线，末柱可不足'],
   en:['Low → current','High → current','Interval volume','Outside chart range','{n} bars per candle, final group may be shorter'],
@@ -14,9 +23,10 @@ const chartCopy={
   ru:['От минимума','От максимума','Объём за период','Вне диапазона','До {n} исходных свечей на столбец'],
   ko:['저점 → 현재','고점 → 현재','구간 거래량','차트 범위 밖','막대당 최대 {n}개 봉 집계'],
 };
+const gapCopy={zh:'中间时段已折叠',en:'Intervening dates are folded',ja:'途中の期間を省略',ru:'Средняя часть периода свёрнута',ko:'중간 기간 생략'};
 const locales={zh:'zh-CN',en:'en-US',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
 const font='Geist,"PingFang SC","Hiragino Sans","Apple SD Gothic Neo","Microsoft YaHei",Arial,sans-serif';
-const dark={page:'#082a31',panel:'#10353b',ink:'#f2f5eb',soft:'#bbcfca',muted:'#9fbeb7',rule:'#34575b',accent:'#ffdb85',up:'#77e0b7',down:'#ff98a4',swell:'#16434a'};
+const dark={page:'#0b2125',panel:'#123238',ink:'#f1f6ed',soft:'#c4d4cd',muted:'#a1b9b4',rule:'#315055',accent:'#ffda84',up:'#66e3aa',down:'#ff929e',swell:'#173a3e'};
 const light={page:'#f4f1e9',panel:'#fffdf7',ink:'#183639',soft:'#3e5c5a',muted:'#53706d',rule:'#c5d2c8',accent:'#8b5312',up:'#076943',down:'#ab3049',swell:'#dce6dc'};
 const width=1080, margin=64, inner=width-2*margin;
 const assetRoot=new URL('./',import.meta.url);
@@ -107,18 +117,26 @@ function swells(ctx,colors) {
   ctx.restore();
 }
 
-function groupCandles(bars,extremeTimes,moves) {
+function groupCandles(bars,extremeTimes,moves,breakAfter) {
   const groupSize=Math.ceil(bars.length/112), groups=[];
-  for(let i=0;i<bars.length;i+=groupSize) {
-    const part=bars.slice(i,i+groupSize);
+  const cut=Number.isFinite(breakAfter)?bars.findIndex(b=>b.time===breakAfter)+1:0;
+  let breakIndex=0;
+  for(let i=0;i<bars.length;) {
+    if(i===cut && cut>0)breakIndex=groups.length;
+    const stop=Math.min(i+groupSize,i<cut?cut:bars.length);
+    const part=bars.slice(i,stop);
     const group={time:part[0].time,end:part.at(-1).time,open:part[0].open,close:part.at(-1).close,
       high:Math.max(...part.map(b=>b.high)),low:Math.min(...part.map(b=>b.low)),
       volume:part.reduce((sum,b)=>sum+(b.volume>0?b.volume:0),0)};
-    group.extremes=moves.filter(({kind,price})=>group[kind]===price &&
-      part.some(b=>b.time===extremeTimes?.[kind] && b[kind]===price)).map(m=>m.kind);
-    groups.push(group);
+    group.extremes=['low','high'].filter(kind=>{
+      const marked=part.find(b=>b.time===extremeTimes?.[kind]);
+      if(!marked || marked[kind]!==group[kind])return false;
+      const move=moves.find(m=>m.kind===kind);
+      return !move || move.price===marked[kind];
+    });
+    groups.push(group);i=stop;
   }
-  return {groups,groupSize};
+  return {groups,groupSize,breakIndex};
 }
 
 function chartModel(model,bars) {
@@ -126,19 +144,44 @@ function chartModel(model,bars) {
   const moves=Number.isFinite(model.currentPrice)&&Number.isFinite(currentTime)?
     (model.moves||[]).filter(m=>['low','high'].includes(m.kind)&&Number.isFinite(m.price)&&Number.isFinite(m.time)&&toMs(m.time)<=currentTime)
       .map(m=>({...m,time:toMs(m.time)})).sort((a,b)=>a.kind==='low'?-1:1):[];
-  const {groups,groupSize}=groupCandles(bars,model.extremeTimes,moves);
+  const {groups,groupSize,breakIndex}=groupCandles(bars,model.extremeTimes,moves,model.breakAfter);
   const outside=moves.filter(m=>m.time<bars[0].time);
-  const height=362+(groupSize>1||outside.length?33:0)+(moves.length?(moves.some(m=>m.volumeText)?122:92):0);
-  return {groups,groupSize,moves,outside,currentTime,height};
+  const height=362+(groupSize>1||outside.length||breakIndex?33:0)+(moves.length?(moves.length===1?68:92)+(moves.some(m=>m.volumeText)?30:0):0);
+  return {groups,groupSize,moves,outside,currentTime,height,breakIndex};
+}
+
+function transactionFields(model,t,trade,savings) {
+  const low=[t.low,model.lowPriceText], lowTime=[t.lowTime,model.lowTimeText];
+  if(savings)return [[[t.capital,model.capitalText],[t.interestStart,model.entryTimeText]],[low,lowTime]];
+  const short=model.side==='short';
+  const funding=[model.lotsText?trade[7]:t.capital,model.capitalText],notional=[t.notional,model.entryNotionalText];
+  if(model.entryKind==='custom') {
+    const price=[trade[short?5:4],model.entryPriceText];
+    if(model.entryPriceText===model.lowPriceText) {
+      price[0]+=' · '+t.low;
+      return [[price,lowTime],[funding,notional]];
+    }
+    return [[price,notional],[low,lowTime],[funding]];
+  }
+  const entries=[[trade[short?1:0],model.entryPriceText],[trade[short?3:2],model.entryTimeText]];
+  const rows=[entries,[funding,notional]];
+  if(short){
+    const remaining=[];
+    if(model.entryPriceText!==model.lowPriceText)remaining.push(low);
+    if(model.entryTimeText!==model.lowTimeText)remaining.push(lowTime);
+    if(remaining.length)rows.push(remaining);
+  }
+  return rows;
 }
 
 function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
-  const {groups,groupSize,moves,outside,currentTime,height}=chart, locale=locales[lang], labels=chartCopy[lang];
+  const {groups,groupSize,moves,outside,currentTime,height,breakIndex}=chart, locale=locales[lang], labels=chartCopy[lang];
   const x=margin,w=inner, inset=28;
   rounded(ctx,x,y,w,height,24,colors.panel);
-  const chartName=[model.chartSymbol||model.symbol,model.interval,t.candles].filter(Boolean).join(' · ');
-  text(ctx,chartName,x+inset,y+21,model.priceText?w-355:w-2*inset,31,colors.ink,{weight:650});
-  if(model.priceText) text(ctx,t.quote+'  '+model.priceText,x+w-inset,y+25,300,23,colors.soft,{align:'right'});
+  const chartName=[model.interval,t.candles].filter(Boolean).join(' · ');
+  const showQuote=model.priceText && model.markPriceText!==model.priceText;
+  text(ctx,chartName,x+inset,y+21,showQuote?w-355:w-2*inset,31,colors.ink,{weight:650});
+  if(showQuote) text(ctx,t.quote+'  '+model.priceText,x+w-inset,y+25,300,23,colors.soft,{align:'right'});
   const plotLeft=x+inset,plotTop=y+78,plotBottom=y+256;
   let cap=Math.max(...groups.map(b=>b.high)),floor=Math.min(...groups.map(b=>b.low));
   if(moves.length) {
@@ -165,8 +208,9 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
   const earlierTimes=[...new Set(outside.map(m=>m.time))].sort((a,b)=>a-b);
   const skipWidth=earlierTimes.length?earlierTimes.length*34+28:0;
   const candleStart=plotLeft+skipWidth;
-  const spacing=(plotRight-candleStart)/(groups.length+(moves.length?1:0));
-  const candleX=i=>candleStart+(i+.5)*spacing;
+  const gapWidth=breakIndex?28:0;
+  const spacing=(plotRight-candleStart-gapWidth)/(groups.length+(moves.length?1:0));
+  const candleX=i=>candleStart+(i+.5)*spacing+(breakIndex && i>=breakIndex?gapWidth:0);
   const last=groups.at(-1),bodyWidth=Math.min(17,Math.max(2,spacing*.65));
   function xAt(time) {
     if(time<groups[0].time)return plotLeft+17+34*earlierTimes.indexOf(time);
@@ -182,10 +226,10 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
       return candleX(i)+within*Math.min(bodyWidth,spacing*.85);
     }
     const prev=groups[Math.max(0,i-1)];
-    return candleX(Math.max(0,i-1))+spacing*(time-prev.end)/(group.time-prev.end);
+    const from=candleX(Math.max(0,i-1));
+    return from+(candleX(i)-from)*(time-prev.end)/(group.time-prev.end);
   }
-  const maxVol=Math.max(...groups.map(b=>b.volume));
-  groups.forEach((b,i)=>{
+  function drawCandle(b,i) {
     const cx=candleX(i), up=b.close>=b.open;
     const marked=b.extremes.length>0;
     const color=marked?'#ffeb34':up?(model.chartUpColor||colors.up):(model.chartDownColor||colors.down);
@@ -198,28 +242,38 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
     ctx.fillStyle=color;ctx.fillRect(cx-bodyWidth/2,bodyY,bodyWidth,bodyHeight);
     if(marked){ctx.lineWidth=1.2;ctx.strokeRect(cx-bodyWidth/2,bodyY,bodyWidth,bodyHeight);}
     ctx.restore();
+  }
+  const maxVol=Math.max(...groups.map(b=>b.volume));
+  groups.forEach((b,i)=>{
+    if(!b.extremes.length)drawCandle(b,i);
     if(b.volume>0) {
       const barHeight=29*b.volume/maxVol;
-      ctx.fillStyle=color;ctx.globalAlpha=.42;ctx.fillRect(cx-bodyWidth/2,y+295-barHeight,bodyWidth,barHeight);ctx.globalAlpha=1;
+      const color=b.extremes.length?'#ffeb34':b.close>=b.open?(model.chartUpColor||colors.up):(model.chartDownColor||colors.down);
+      ctx.fillStyle=color;ctx.globalAlpha=.42;ctx.fillRect(candleX(i)-bodyWidth/2,y+295-barHeight,bodyWidth,barHeight);ctx.globalAlpha=1;
     }
   });
-  if(skipWidth) {
+  const breaks=[];
+  if(skipWidth)breaks.push(candleStart-14);
+  if(breakIndex)breaks.push((candleX(breakIndex-1)+candleX(breakIndex))/2-4);
+  for(const center of breaks) {
     ctx.strokeStyle=colors.muted;ctx.lineWidth=2;
     ctx.beginPath();
-    for(const offset of [0,7]) {ctx.moveTo(candleStart-17+offset,y+294);ctx.lineTo(candleStart-11+offset,y+277);}
+    for(const offset of [0,7]) {ctx.moveTo(center-3+offset,y+294);ctx.lineTo(center+3+offset,y+277);}
     ctx.stroke();
   }
-  const moveColors=colors===dark?{low:'#9edbff',high:'#ffcf7a'}:{low:'#176299',high:'#9a5612'};
+  const theme=colors===dark?'dark':'light';
   for(const move of moves) {
     const anchor=groups.findIndex(b=>b.extremes.includes(move.kind));
     const sx=anchor<0?xAt(move.time):candleX(anchor),sy=priceY(move.price),ex=xAt(currentTime),ey=priceY(model.currentPrice);
     ctx.save();
-    ctx.lineWidth=3.2;ctx.strokeStyle=moveColors[move.kind];
-    if(move.kind==='high')ctx.setLineDash([10,6]);
-    ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(ex,ey);ctx.stroke();ctx.setLineDash([]);
-    ctx.fillStyle=moveColors[move.kind];ctx.beginPath();ctx.arc(sx,sy,5.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.rect(plotLeft-4,plotTop-8,plotRight-plotLeft+8,plotBottom-plotTop+16);ctx.clip();
+    drawMoveTrail(ctx,{segment:[sx,sy,ex,ey],kind:move.kind,theme,scale:1.5,phase:null,compact:false});
+    if(anchor<0) {
+      ctx.fillStyle=moveTrailColor(move.kind,theme);ctx.beginPath();ctx.arc(sx,sy,4.5,0,Math.PI*2);ctx.fill();
+    }
     ctx.restore();
   }
+  groups.forEach((bar,i)=>{if(bar.extremes.length)drawCandle(bar,i);});
   if(moves.length) {
     ctx.fillStyle=colors.ink;ctx.strokeStyle=colors.panel;ctx.lineWidth=2;
     ctx.beginPath();ctx.arc(xAt(currentTime),priceY(model.currentPrice),6,0,Math.PI*2);ctx.fill();ctx.stroke();
@@ -234,23 +288,25 @@ function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
   text(ctx,stamp(groups[0].time),candleStart,y+309,335,19,colors.muted);
   if(groups.length>1)text(ctx,stamp(last.end),candleX(groups.length-1),y+309,335,19,colors.muted,{align:'right'});
   let below=y+351;
-  if(groupSize>1||outside.length) {
-    const notes=[outside.length?'//  '+labels[3]:null,groupSize>1?labels[4].replace('{n}',String(groupSize)):null].filter(Boolean);
+  if(groupSize>1||outside.length||breakIndex) {
+    const notes=[outside.length?'//  '+labels[3]:null,breakIndex?'//  '+gapCopy[lang]:null,groupSize>1?labels[4].replace('{n}',String(groupSize)):null].filter(Boolean);
     text(ctx,notes.join('   ·   '),plotLeft,below-6,w-2*inset,19,colors.soft);below+=33;
   }
   if(moves.length) {
     rule(ctx,plotLeft,below,w-2*inset,colors.rule);
-    const column=(w-2*inset)/2;
+    const solo=moves.length===1, column=(w-2*inset)/moves.length;
     moves.forEach((m,i)=>{
-      const pos=plotLeft+i*column, color=moveColors[m.kind], low=m.kind==='low';
-      ctx.save();ctx.strokeStyle=color;ctx.lineWidth=3.2;if(!low)ctx.setLineDash([7,4]);
-      ctx.beginPath();ctx.moveTo(pos,below+32);ctx.lineTo(pos+34,below+32);ctx.stroke();ctx.restore();
-      text(ctx,labels[low?0:1],pos+45,below+17,column-56,24,colors.soft);
-      text(ctx,m.percentText,pos,below+47,column-16,34,color,{weight:660});
-      if(m.volumeText)text(ctx,labels[2]+'  '+m.volumeText,pos,below+91,column-12,20,colors.soft);
-      m.notes.forEach((line,n)=>text(ctx,line,pos,below+(m.volumeText?121:91)+n*25,column-14,20,colors.muted));
-
+      const pos=plotLeft+i*column, color=moveTrailColor(m.kind,theme), low=m.kind==='low';
+      drawMoveTrail(ctx,{segment:[pos+3,below+(low?39:21),pos+91,below+(low?21:39)],kind:m.kind,theme,scale:1.2,phase:null});
+      text(ctx,labels[low?0:1],pos+106,below+17,solo?column*.48:column-116,24,colors.soft);
+      if(solo)text(ctx,m.percentText,pos+column,below+11,column*.36,37,color,{weight:680,align:'right'});
+      else text(ctx,m.percentText,pos,below+47,column-16,34,color,{weight:660});
+      const metaTop=below+(solo?65:91);
+      if(m.volumeText)text(ctx,labels[2]+'  '+m.volumeText,pos,metaTop,column-12,20,colors.soft);
+      m.notes.forEach((line,n)=>text(ctx,line,pos,metaTop+(m.volumeText?30:0)+n*25,column-14,20,colors.muted));
     });
+    const sharedTop=below+(moves.some(m=>m.volumeText)?121:91)+Math.max(...moves.map(m=>m.notes.length))*25;
+    chart.commonNotes.forEach((note,i)=>text(ctx,note,plotLeft,sharedTop+25*i,w-2*inset,20,colors.muted));
   }
   return y+height;
 }
@@ -273,31 +329,26 @@ export async function renderSharePoster(model) {
   ]);
   const colors=model.theme==='light'?light:dark;
   const savings=model.side==='savings'||model.side==='bank';
+  const trade=tradeCopy[lang];
   const single=model.mode!=='bundle';
   const signColor=model.pnl<0?colors.down:model.pnl>0?colors.up:colors.ink;
   const serviceLines=list.map(row=>lines(ctx,row.title,single?inner-198:inner-128,single?35:28,630));
   const serviceHeights=serviceLines.map(ls=>single?Math.max(170,ls.length*43+103):Math.max(100,ls.length*35+58));
-  const fieldRows=[
-    [[t.low,model.lowPriceText],[t.lowTime,model.lowTimeText]],
-    [[savings?t.investment:t.notional,model.entryNotionalText],[savings?t.interestStart:t.entryPrice,savings?model.entryTimeText:model.entryPriceText]],
-  ];
-  if(!savings && (model.entryBasisText||model.entryTimeText)) {
-    fieldRows.push([[t.basis,model.entryBasisText],[t.entryTime,model.entryTimeText]]);
-  }
+  const fieldRows=transactionFields(model,t,trade,savings);
   const column=(inner-36)/2;
   const detailRows=fieldRows.map(cells=>cells.map(([label,value])=>({label,lines:lines(ctx,value,column,30,580)})));
   const rowHeight=row=>42+Math.max(...row.map(cell=>cell.lines.length))*36+13;
   const detailsHeight=detailRows.reduce((sum,row)=>sum+rowHeight(row),0);
   const serviceHeight=list.length?94+serviceHeights.reduce((a,b)=>a+b,0):0;
   const chart=chartModel(model,bars);
-  const noteWidth=(inner-56)/2-14;
+  const noteWidth=(inner-56)/Math.max(1,chart.moves.length)-14;
+  const shared=chart.moves.length===2?['untilText','volumeBasis'].filter(key=>chart.moves[0][key] && chart.moves[0][key]===chart.moves[1][key]):[];
+  chart.commonNotes=shared.flatMap(key=>lines(ctx,chart.moves[0][key],inner-56,20));
   chart.moves.forEach(m=>{
-    m.notes=[m.untilText,m.volumeBasis]
-      .filter(Boolean).flatMap(value=>lines(ctx,value,noteWidth,20));
+    m.notes=['untilText','volumeBasis'].filter(key=>m[key] && !shared.includes(key)).flatMap(key=>lines(ctx,m[key],noteWidth,20));
   });
-  chart.height+=Math.max(0,...chart.moves.map(m=>m.notes.length))*25;
-
-  const chartTop=514,detailsTop=chartTop+chart.height+34,footerTop=detailsTop+detailsHeight+serviceHeight+20;
+  chart.height+=(chart.commonNotes.length+Math.max(0,...chart.moves.map(m=>m.notes.length)))*25;
+  const detailsTop=508,chartTop=detailsTop+detailsHeight+20,serviceTop=chartTop+chart.height+30,footerTop=serviceTop+serviceHeight+20;
   canvas.height=footerTop+211;
   ctx.textBaseline='top';ctx.fillStyle=colors.page;ctx.fillRect(0,0,width,canvas.height);
   swells(ctx,colors);
@@ -308,30 +359,23 @@ export async function renderSharePoster(model) {
   pen(ctx,24,630);const pillWidth=ctx.measureText(pill).width+45;
   rounded(ctx,width-margin-pillWidth,62,pillWidth,45,22,colors.swell);
   text(ctx,pill,width-margin-pillWidth/2,72,pillWidth-21,24,colors.soft,{align:'center',weight:630});
-  rule(ctx,margin,143,inner,colors.rule);
-
+  rule(ctx,margin,136,inner,colors.rule);
+  text(ctx,model.symbol,margin,158,inner,53,colors.ink,{weight:720,min:29});
   const side=(savings?t.savings:model.side==='short'?t.short:t.long);
-  pen(ctx,26,650);const sideWidth=ctx.measureText(side).width+36;
-  rounded(ctx,margin,178,sideWidth,45,10,colors.panel);
-  text(ctx,side,margin+sideWidth/2,186,sideWidth-14,26,model.sideColor||(savings?colors.accent:model.side==='short'?colors.down:colors.up),{align:'center',weight:650});
-  text(ctx,[model.market,model.symbol].filter(Boolean).join('  /  '),margin+sideWidth+18,184,inner-sideWidth-27,35,colors.ink,{weight:650});
-  const basisCaption=!savings&&model.markPriceText?[model.markLabel,model.markPriceText].filter(Boolean).join(' '):'';
-  const pnlCaption=[savings?t.interest:t.pnl,basisCaption].filter(Boolean).join('  ·  ');
-  text(ctx,pnlCaption,margin,249,inner,29,colors.soft);
-  text(ctx,model.pnlText,margin-2,280,inner,99,signColor,{weight:700,min:38});
-  rule(ctx,margin,401,inner,colors.rule);
-  const metrics=[[t.return,model.roiText],[t.capital,model.capitalText]];
-  if(savings)metrics.push([t.rate,model.annualRateText||'3%']);
-  else if(model.lotsText)metrics.push([model.positionSizeLabel||({zh:'手数',en:'Lots',ja:'取引枚数',ru:'Лоты',ko:'계약 수'})[lang],model.lotsText]);
-  else if(model.leverageText)metrics.push([t.leverage,model.leverageText]);
-  const segment=inner/metrics.length;
-  metrics.forEach(([label,value],i)=>{
-    const x=margin+i*segment;
-    text(ctx,label,x,421,segment-16,22,colors.muted);
-    text(ctx,value,x,454,segment-18,34,colors.ink,{weight:640});
-  });
-  drawChart(ctx,model,chart,chartTop,colors,t,lang,zone);
-
+  pen(ctx,24,650);const sideWidth=ctx.measureText(side).width+30;
+  rounded(ctx,margin,223,sideWidth,38,7,colors.panel);
+  text(ctx,side,margin+sideWidth/2,229,sideWidth-12,24,model.sideColor||(savings?colors.accent:model.side==='short'?colors.down:colors.up),{align:'center',weight:650});
+  const exposure=savings?t.rate+' '+(model.annualRateText||'3%'):model.lotsText?trade[6]+' '+model.lotsText:model.leverageText;
+  text(ctx,[exposure,model.market].filter(Boolean).join('   ·   '),margin+sideWidth+18,230,inner-sideWidth-18,24,colors.soft,{weight:560});
+  text(ctx,t.return,margin,282,inner,25,colors.soft);
+  text(ctx,model.roiText,margin-4,307,inner,124,signColor,{weight:740,min:54});
+  const showMark=!savings && model.markPriceText;
+  text(ctx,savings?t.interest:t.pnl,margin,432,showMark?inner*.56:inner,23,colors.muted);
+  text(ctx,model.pnlText,margin,459,showMark?inner*.56:inner,34,colors.ink,{weight:640});
+  if(showMark){
+    text(ctx,model.markLabel,margin+inner,432,inner*.41,23,colors.muted,{align:'right'});
+    text(ctx,model.markPriceText,margin+inner,459,inner*.41,33,colors.ink,{weight:600,align:'right'});
+  }
   let y=detailsTop;
   for(const row of detailRows) {
     rule(ctx,margin,y,inner,colors.rule);
@@ -342,6 +386,8 @@ export async function renderSharePoster(model) {
     });
     y+=rowHeight(row);
   }
+  drawChart(ctx,model,chart,chartTop,colors,t,lang,zone);
+  y=serviceTop;
   if(list.length) {
     rule(ctx,margin,y,inner,colors.rule);
     text(ctx,t.power,margin,y+29,inner-330,38,colors.ink,{weight:690});

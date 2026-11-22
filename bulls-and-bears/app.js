@@ -3,14 +3,16 @@ import {reveal,quoteTick} from './motion.js?v=20261122-market-v3';
 import {createPaperTrading} from './paper-trading.js?v=20261122-share';
 import {startFeed} from './feed.js?v=20261122-market-v3';
 import {createCycleTracker} from './cycle.js?v=20261122-share';
-import {createChartView,findLevelIndex} from './chart.js?v=20261122-share';
-import {createShareDialog} from './share-dialog.js?v=20261122-share';
+import {createChartView,findLevelIndex} from './chart.js?v=20261122-trails';
+import {movesForInterval} from './chart-moves.js?v=20261122-trails';
+import {createShareDialog} from './share-dialog.js?v=20261122-trails';
+import {positionShareBars} from './share-bars.js?v=20261122-trails';
 import {createMoveVolumes,describeMoves,marketTime} from './move-context.js?v=20261122-share';
 import {getCryptoBars,loadCryptoYear,shareCycleBars,currentCryptoDay} from './crypto-intervals.js?v=20261122-share';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
-import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-market-v3';
+import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-trails';
 import {createPositions} from './positions.js?v=20261122-share';
-import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-market-v3';
+import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-trails';
 import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-share';
 import {percent} from './metrics.js?v=20261122-market-v3';
 
@@ -163,6 +165,7 @@ function renderAsset() {
 }
 function renderRange() {
   const selected=activeInterval();
+  $('move-high-summary').hidden=selected!=='1d';
   for(const btn of all('[data-interval]')) btn.setAttribute('aria-pressed',String(btn.dataset.interval===selected));
   $('year-range').setAttribute('aria-pressed',String(yearMode));
   $('cycle-overview').setAttribute('aria-pressed',String(historyView?.kind==='cycle'));
@@ -208,19 +211,14 @@ async function makeShareModel(side) {
   const labels={ '1m':'1 分钟','15m':'15 分钟','30m':'30 分钟','1h':'1 小时','1d':'日线'};
   const title=cryptoMarket?asset.symbol:isFuture()?(data.contract||asset.symbol):assetName(asset)+' · '+asset.symbol;
   const color=getComputedStyle(document.querySelector('[data-share-side="'+side+'"]').closest('article')).getPropertyValue('--side-accent').trim();
-  const chartBars=chart.shareBars();
   const barContext={...chartState(),symbol:asset.symbol};
-  const starts=Math.min(...[levels.low,levels.high].filter(Boolean).map(p=>p.time));
-  let chosen=chartBars,frame=selected;
+  const series=positionShareBars({side,source,asset,selected,levels:info.levels,
+    chartBars:chart.shareBars(),chartSourceId:barContext.sourceId,cryptoMarket,future:isFuture()});
   const asOfText=marketTime({time:source.asOf,precisionMs:1000},lang,timezone,t);
   const model={...position,lang:language,theme:themeNow,side,symbol:title,market:[data.source,kind()].filter(Boolean).join(' · '),
     currentPrice:data.price,currentTime:source.asOf,chartAsOf:source.asOf,timeZone:timezone,
     asOfText,priceDigits:asset.digits||2,priceText:num(data.price)+' '+unit(),sideColor:color,
     entryBasisText:marked,lowPriceText:num(levels.low.price)+' '+unit()};
-  const nativeWidth=({'1m':60000,'15m':900000,'30m':1800000,'1h':3600000,'1d':86400000})[selected];
-  const reachesQuote=chartBars.length && (source.asOf<chartBars.at(-1).time+nativeWidth && source.asOf>=chartBars.at(-1).time);
-  const needsHistory=cryptoMarket && (!reachesQuote || !chartBars.length || starts<chartBars[0].time);
-  const history=needsHistory?shareCycleBars(source,starts).catch(()=>[]):Promise.resolve([]);
   const captured=Object.fromEntries(Object.entries(info.records).map(([key,record])=>[key,{result:record.result}]));
   const waiting=Object.entries(info.records).filter(([,record])=>record.promise).map(([key,record])=>
     record.promise.then(()=>{
@@ -230,22 +228,22 @@ async function makeShareModel(side) {
   let timeout;
   const ready=waiting.length?Promise.race([Promise.allSettled(waiting),new Promise(resolve=>{timeout=setTimeout(resolve,12000);})]):Promise.resolve();
   const moves=ready.then(()=>describeMoves({...info,records:captured},t,false));
-  const [daily,shareMoves]=await Promise.all([history,moves]).finally(()=>clearTimeout(timeout));
-  if(daily.length){chosen=daily;frame='1d';}
-  else if(cryptoMarket && !reachesQuote){chosen=source.candles.slice(-72);frame='15m';}
+  const [seriesData,shareMoves]=await Promise.all([series,moves]).finally(()=>clearTimeout(timeout));
+  const {bars:chosen,frame,sourceId,breakAfter,barLevels}=seriesData;
   if(!chosen.length)return null;
-  model.interval=t(language,labels[frame]);model.bars=chosen.map(b=>({...b}));
+  model.interval=t(language,labels[frame]);model.bars=chosen.map(b=>({...b}));model.breakAfter=breakAfter;
   barContext.interval=frame;
-  if(daily.length || (cryptoMarket && !reachesQuote))barContext.sourceId=source.sourceId;
+  barContext.sourceId=sourceId;
+  if(barLevels)barContext.levels=barLevels;
   model.extremeTimes={};
   for(const kind of ['high','low']){
     const index=findLevelIndex(chosen,barContext,kind);
     if(index>=0)model.extremeTimes[kind]=chosen[index].time;
   }
-  model.moves=shareMoves;
-  const low=model.moves.find(m=>m.kind==='low');
+  model.moves=movesForInterval(shareMoves,frame);
+  const low=shareMoves.find(m=>m.kind==='low');
   model.lowTimeText=low?.timeText||marketTime(info.levels.low,language,timezone,t);
-  const entry=model.moves.find(m=>m.kind===position.entryKind);
+  const entry=shareMoves.find(m=>m.kind===position.entryKind);
   model.entryTimeText=entry?.timeText||(position.entryAt?marketTime({time:position.entryAt,precisionMs:1000},language,'Asia/Shanghai',t):'');
   return model;
 }

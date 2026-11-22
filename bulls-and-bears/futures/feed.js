@@ -174,3 +174,10 @@ export async function loadFutureWindow(symbol,frame,pointTime,signal) {
   if (idx<0)return [];
   return rows.slice(Math.max(0,idx-55),idx+56);
 }
+
+export function captureFutureFrame(snapshot,frame) {
+  const product=products.get(snapshot.symbol),raw=cache.get(snapshot.symbol);
+  if(!product || !raw || !frames.has(frame) || raw.asOf!==snapshot.asOf || raw.generatedAt!==snapshot.generatedAt ||
+     raw.contract!==snapshot.contract || raw.sourceId!==snapshot.sourceId)return null;
+  return {candles:compose(product,raw,frame).candles,sourceId:raw.sourceId,barSource:raw.barSource};
+}

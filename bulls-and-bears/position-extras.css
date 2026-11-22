@@ -161,10 +161,11 @@
 .position-share svg {width:15px;height:15px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .position-share:hover,.position-share:focus-visible {color:var(--text);background:var(--selected)}
 .move-stats {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;border-top:1px solid var(--line);padding-block:10px 2px}
+.move-stats:has(.move-high[hidden]) {grid-template-columns:minmax(0,1fr)}
 .move-stat {min-width:0;background:var(--panel-low);border-radius:5px;padding:9px 12px}
 .move-head,.move-volume-line {display:flex;align-items:baseline;gap:5px 9px;flex-wrap:wrap}
 .move-head {color:var(--text);font-size:.82rem;font-weight:570}
-.move-head i {display:inline-block;width:18px;align-self:center;border-top:2px solid var(--up)}
+.move-head i {display:inline-block;width:22px;align-self:center;border-top:4px solid var(--up);border-radius:2px}
 .move-high .move-head i {border-top-style:dashed;border-top-color:var(--down)}
 .move-head b {margin-inline-start:auto;font:650 .99rem/1.2 var(--number);color:var(--up)}
 .move-high .move-head b {color:var(--down)}

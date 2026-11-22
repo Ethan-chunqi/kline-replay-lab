@@ -1,3 +1,9 @@
+import {drawMoveTrail,moveTrailColor} from './move-trails.js?v=20261122-trails';
+
+export function movesForInterval(moves,interval) {
+  return interval==='1d'?moves:moves.filter(move=>move.kind==='low');
+}
+
 // A move joins the certified extreme to the timestamped quote. When available
 // candles cover only part of that span, draw only that part of the line.
 const labels={
@@ -88,30 +94,30 @@ function paintLabel(ctx,size,{segment,move,color},theme,locale,occupied) {
   return {x,y,w,h};
 }
 
-export function drawMoves({ctx,size,rows,matches,view,currentOnLast,width,scale,series}) {
-  if(!rows.length || !view.moves?.length || size.width<55 || size.height<50)return;
+export function drawMoves({ctx,size,rows,matches,view,currentOnLast,width,scale,series,phase=null}) {
+  if(!rows.length || !view.moves?.length || size.width<55 || size.height<50)return false;
   const quote={time:view.currentTime,price:view.currentPrice};
-  const palette=view.theme==='light'?{low:'#087755',high:'#bc3451'}:{low:'#5ee8ae',high:'#ff899f'};
   const visible=[];
   ctx.save();ctx.beginPath();ctx.rect(0,0,size.width,size.height);ctx.clip();
-  for(const move of view.moves) {
-    if(!(move.kind in palette))continue;
+  for(const move of movesForInterval(view.moves,view.interval)) {
+    if(move.kind!=='low' && move.kind!=='high')continue;
     const span=moveSpan(rows,move,quote,width,currentOnLast,matches[move.kind]);
     if(!span)continue;
     const x0=scale.logicalToCoordinate(span.start.index),y0=series.priceToCoordinate(span.start.price);
     const x1=scale.logicalToCoordinate(span.end.index),y1=series.priceToCoordinate(span.end.price);
     const segment=clipSegment(x0,y0,x1,y1,size.width,size.height);
     if(!segment)continue;
-    const color=palette[move.kind];
-    ctx.strokeStyle=color;ctx.lineWidth=1.6;ctx.setLineDash(move.kind==='high'?[6,3]:[]);
-    ctx.beginPath();ctx.moveTo(segment[0],segment[1]);ctx.lineTo(segment[2],segment[3]);ctx.stroke();
-    ctx.setLineDash([]);
+    const color=moveTrailColor(move.kind,view.theme);
+    const offsetPhase=phase==null?null:(phase+(move.kind==='high'?.26:0))%1;
+    drawMoveTrail(ctx,{segment,kind:move.kind,theme:view.theme,phase:offsetPhase,compact:size.width<430});
     if(span.actualEnd && x1>=0 && x1<=size.width && y1>=0 && y1<=size.height){
-      ctx.fillStyle=view.theme==='light'?'#fff':'#181a20';ctx.beginPath();ctx.arc(x1,y1,3.1,0,2*Math.PI);ctx.fill();ctx.stroke();
+      ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.fillStyle=view.theme==='light'?'#fff':'#181a20';
+      ctx.beginPath();ctx.arc(x1,y1,3.1,0,2*Math.PI);ctx.fill();ctx.stroke();
     }
     visible.push({segment,move,color});
   }
   let occupied;
   for(const item of visible)occupied=paintLabel(ctx,size,item,view.theme,view.locale,occupied);
   ctx.restore();
+  return visible.some(({segment:[x0,y0,x1,y1]})=>Math.hypot(x1-x0,y1-y0)>32);
 }

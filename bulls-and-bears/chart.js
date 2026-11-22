@@ -1,4 +1,4 @@
-import {drawMoves} from './chart-moves.js?v=20261122-share';
+import {drawMoves} from './chart-moves.js?v=20261122-trails';
 import {koreanHours} from './equities/korea-session.js?v=20261122-market-v3';
 import {
   CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineStyle, TickMarkType, createChart,
@@ -120,6 +120,19 @@ export function createChartView(container, onHover = () => {}, options = {}) {
   let disposed = false;
   let currentOnLast = false;
   let invalidateOverlays = () => {};
+  const motion=matchMedia('(prefers-reduced-motion: reduce)');
+  let inViewport=typeof IntersectionObserver==='undefined',trailTimer=0;
+  const motionEnabled=()=>inViewport && !motion.matches && !document.hidden && !disposed;
+  function resetTrailAnimation() {
+    clearTimeout(trailTimer);trailTimer=0;
+    if(!disposed)invalidateOverlays();
+  }
+  const observer=typeof IntersectionObserver==='undefined'?null:new IntersectionObserver(([entry])=>{
+    inViewport=entry.isIntersecting;resetTrailAnimation();
+  });
+  observer?.observe(container);
+  motion.addEventListener('change',resetTrailAnimation);
+  document.addEventListener('visibilitychange',resetTrailAnimation);
   const chart = createChart(container, {
     autoSize: true,
     layout: { background: { type: ColorType.Solid, color: palettes.dark.background }, fontSize: 12, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', attributionLogo: true },
@@ -174,9 +187,14 @@ export function createChartView(container, onHover = () => {}, options = {}) {
   const movesOverlay={
     zOrder:()=> 'top',
     renderer:()=>({draw(target) {
-      target.useMediaCoordinateSpace(({context:ctx,mediaSize:size})=>drawMoves({
-        ctx,size,rows,matches,view,currentOnLast,width:intervalMs[view.interval],scale:chart.timeScale(),series:candles,
-      }));
+      target.useMediaCoordinateSpace(({context:ctx,mediaSize:size})=>{
+        const phase=motionEnabled()?(performance.now()%7000)/7000:null;
+        const animated=drawMoves({ctx,size,rows,matches,view,currentOnLast,width:intervalMs[view.interval],
+          scale:chart.timeScale(),series:candles,phase});
+        if(animated && phase!=null && !trailTimer)trailTimer=setTimeout(()=>{
+          trailTimer=0;if(motionEnabled())invalidateOverlays();
+        },40);
+      });
     }}),
   };
   candles.attachPrimitive({
@@ -363,6 +381,9 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     destroy() {
       if (disposed) return;
       disposed = true;
+      clearTimeout(trailTimer);observer?.disconnect();
+      motion.removeEventListener('change',resetTrailAnimation);
+      document.removeEventListener('visibilitychange',resetTrailAnimation);
       chart.unsubscribeCrosshairMove(hover);
       chart.remove();
       byTime.clear();

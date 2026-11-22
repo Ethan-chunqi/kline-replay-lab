@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./market.css?v=20261122-market-v3">
   <link rel="stylesheet" href="./share-dialog.css?v=20261122-share">
-  <link rel="stylesheet" href="./position-extras.css?v=20261122-share">
+  <link rel="stylesheet" href="./position-extras.css?v=20261122-trails">
   <link rel="stylesheet" href="./market-art.css?v=20261122-market-v3">
   <link rel="stylesheet" href="./paper-trading.css?v=20261122-market-v3">
   <script>
@@ -110,7 +110,7 @@
         </div>
         <div class="move-stats">
           <div class="move-stat move-low"><div class="move-head"><i aria-hidden="true"></i><span data-i18n="reboundLeg">低点 → 现价</span><b id="move-low-percent">—</b></div><div class="move-volume-line"><span data-i18n="periodVolume">区间成交量</span><strong id="move-low-volume">—</strong><small id="move-low-until"></small></div></div>
-          <div class="move-stat move-high"><div class="move-head"><i aria-hidden="true"></i><span data-i18n="retreatLeg">高点 → 现价</span><b id="move-high-percent">—</b></div><div class="move-volume-line"><span data-i18n="periodVolume">区间成交量</span><strong id="move-high-volume">—</strong><small id="move-high-until"></small></div></div>
+          <div class="move-stat move-high" id="move-high-summary" hidden><div class="move-head"><i aria-hidden="true"></i><span data-i18n="retreatLeg">高点 → 现价</span><b id="move-high-percent">—</b></div><div class="move-volume-line"><span data-i18n="periodVolume">区间成交量</span><strong id="move-high-volume">—</strong><small id="move-high-until"></small></div></div>
         </div>
         <div class="year-context" id="year-context" hidden>
           <span id="year-note" role="status"></span>
@@ -140,6 +140,6 @@
     </aside>
     <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a><span class="divider">/</span><a href="./brand/SOURCES.md" target="_blank" rel="noopener" data-i18n="artCredit">图片来源</a></span><span id="updated"></span></footer>
   </main>
-  <script type="module" src="./app.js?v=20261122-share"></script>
+  <script type="module" src="./app.js?v=20261122-trails"></script>
 </body>
 </html>
