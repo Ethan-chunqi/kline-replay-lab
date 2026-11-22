@@ -10,3 +10,4 @@ The market header serves optimized WebP derivatives locally. CSS controls contra
 - Liang Wenfeng (梁文锋), DeepSeek founder. The China A-share header uses an original AI-assisted editorial illustration. The individual is identified at the right of the municipal news photograph in [Hangzhou's report on the premier's AI roundtable](https://www.ehangzhou.gov.cn/2025-01/22/c_292410.htm).
 
 - The metallic shark in the share poster is original artwork generated for Bulls & Bears with ImageGen.
+- The bull and bear sculptures in the P&L card are original artwork generated for Bulls & Bears with ImageGen.
