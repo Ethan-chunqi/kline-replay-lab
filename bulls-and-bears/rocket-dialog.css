@@ -1,0 +1,30 @@
+.rocket-dialog {
+  width:min(720px,calc(100% - 24px)); max-width:none; max-height:92dvh; margin:auto;
+  padding:0; overflow:auto; color:var(--text); background:var(--panel); border:1px solid var(--line-light);
+  border-radius:14px; box-shadow:0 20px 70px #0008;
+}
+.rocket-dialog::backdrop {background:rgb(3 9 13 / 72%)}
+.rocket-dialog header,.rocket-dialog footer {display:flex;align-items:center;gap:8px;padding:8px 16px}
+.rocket-dialog header {justify-content:space-between;border-bottom:1px solid var(--line)}
+.rocket-dialog h2 {margin:0;font:650 1.06rem/1.3 var(--body)}
+.rocket-dialog button,.rocket-dialog footer a {font:600 .86rem/1.2 var(--body);color:var(--text)}
+.rocket-dialog .rocket-close {width:44px;height:44px;font-size:1.55rem;font-weight:400;color:var(--soft)}
+.rocket-stage {display:grid;place-items:center;background:var(--panel-low)}
+.rocket-stage video {display:block;width:100%;height:auto;aspect-ratio:16/9;max-height:62dvh;background:#0a1721}
+.rocket-progress {width:min(360px,82%);margin:clamp(32px,7vw,60px) 0}
+.rocket-step {display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;color:var(--soft);font-size:.9rem}
+.rocket-step output {font-variant-numeric:tabular-nums;color:var(--text)}
+.rocket-progress progress {display:block;width:100%;height:6px;accent-color:var(--gold)}
+.rocket-dialog footer {justify-content:flex-end;flex-wrap:wrap;padding-block:12px;border-top:1px solid var(--line)}
+.rocket-dialog footer :is(a,button) {display:inline-flex;justify-content:center;align-items:center;min-height:42px;padding:7px 15px;border-radius:7px;border:1px solid var(--line-light);text-decoration:none}
+.rocket-dialog footer :is(a,button):hover,.rocket-dialog footer :is(a,button):focus-visible {border-color:var(--gold)}
+.rocket-dialog footer :is(.rocket-share,.rocket-save) {background:var(--gold);border-color:transparent;color:#201b09}
+.rocket-dialog footer:has(.rocket-share:not([hidden])) .rocket-save {background:transparent;border-color:var(--line-light);color:var(--text)}
+.rocket-message,.rocket-hint {margin:0;padding:12px 16px;color:var(--soft);font:.87rem/1.5 var(--body)}
+.rocket-hint {padding-top:0;text-align:end}
+.rocket-dialog [hidden] {display:none!important}
+@media(max-width:520px){
+ .rocket-dialog {width:calc(100% - 16px)}
+ .rocket-dialog header,.rocket-dialog footer {padding-inline:12px}
+ .rocket-dialog footer :is(a,button) {flex:1 1 auto}
+}

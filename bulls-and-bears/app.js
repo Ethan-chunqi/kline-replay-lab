@@ -3,17 +3,18 @@ import {reveal,quoteTick} from './motion.js?v=20261122-market-v3';
 import {createPaperTrading} from './paper-trading.js?v=20261122-share';
 import {startFeed} from './feed.js?v=20261122-market-v3';
 import {createCycleTracker} from './cycle.js?v=20261122-share';
-import {createChartView,findLevelIndex} from './chart.js?v=20261122-trails';
-import {movesForInterval} from './chart-moves.js?v=20261122-trails';
-import {createShareDialog} from './share-dialog.js?v=20261122-trails2';
+import {createChartView,findLevelIndex} from './chart.js?v=20261122-editorial';
+import {movesForInterval} from './chart-moves.js?v=20261122-editorial';
+import {createShareDialog} from './share-dialog.js?v=20261122-editorial-2';
+import {createRocketDialog} from './rocket-dialog.js?v=20261122-editorial';
 import {positionShareBars} from './share-bars.js?v=20261122-trails';
 import {createMoveVolumes,describeMoves,marketTime} from './move-context.js?v=20261122-share';
 import {getCryptoBars,loadCryptoYear,shareCycleBars,currentCryptoDay} from './crypto-intervals.js?v=20261122-share';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
 import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-trails';
-import {createPositions} from './positions.js?v=20261122-share';
+import {createPositions} from './positions.js?v=20261122-editorial-2';
 import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-trails';
-import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-share';
+import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-editorial';
 import {percent} from './metrics.js?v=20261122-market-v3';
 
 window.EQUITY_DATA_URL = 'https://raw.githubusercontent.com/Ethan-chunqi/kline-replay-lab/market-data/quotes/';
@@ -180,6 +181,8 @@ function ohlc() {
 const chart=createChartView($('chart'),candle=>{hover=candle;ohlc();});
 const paperTrading=createPaperTrading($('paper-trading'),{t,localeFor,dateTime});
 const shareDialog=createShareDialog({getModel:makeShareModel});
+const rocketDialog=createRocketDialog({getModel:signal=>makeShareModel('long',{chartOnly:true,signal})});
+$('rocket-video').addEventListener('click',()=>rocketDialog.open());
 const positions=createPositions($('position-panel'),{t,onShare:side=>shareDialog.open(side)});
 let volumeRecords={}, currentMoves=[];
 const volumeTracker=createMoveVolumes(()=>{if(asset && data){renderLevels();drawChart();}});
@@ -197,11 +200,12 @@ function renderMoves() {
   }
   $('cycle-overview').hidden=!isCrypto();
   $('cycle-overview').disabled=!currentMoves.length;
+  $('rocket-video').disabled=!levels?.low || !data?.price;
   document.querySelectorAll('.move-volume-line').forEach(node=>{node.hidden=!isCrypto();});
 }
 
-async function makeShareModel(side) {
-  const position=positions.snapshot(side);
+async function makeShareModel(side,{chartOnly=false,signal}={}) {
+  const position=chartOnly?{}:positions.snapshot(side);
   if(!position || !levels?.low || !data?.price || !data?.asOf) return null;
   // Freeze values before awaiting candles or volume. The market can switch while the PNG renders.
   const source={...data}, info={...describeSource(),records:{...volumeRecords}};
@@ -210,7 +214,7 @@ async function makeShareModel(side) {
   const marked=position.entryKind==='low'&&asset.symbol==='SOLUSDT'?translate('solLowLabel'):position.entryBasisText;
   const labels={ '1m':'1 分钟','15m':'15 分钟','30m':'30 分钟','1h':'1 小时','1d':'日线'};
   const title=cryptoMarket?asset.symbol:isFuture()?(data.contract||asset.symbol):assetName(asset)+' · '+asset.symbol;
-  const color=getComputedStyle(document.querySelector('[data-share-side="'+side+'"]').closest('article')).getPropertyValue('--side-accent').trim();
+  const color=chartOnly?'':getComputedStyle(document.querySelector('[data-share-side="'+side+'"]').closest('article')).getPropertyValue('--side-accent').trim();
   const barContext={...chartState(),symbol:asset.symbol};
   const series=positionShareBars({side,source,asset,selected,levels:info.levels,
     chartBars:chart.shareBars(),chartSourceId:barContext.sourceId,cryptoMarket,future:isFuture()});
@@ -229,6 +233,7 @@ async function makeShareModel(side) {
   const ready=waiting.length?Promise.race([Promise.allSettled(waiting),new Promise(resolve=>{timeout=setTimeout(resolve,12000);})]):Promise.resolve();
   const moves=ready.then(()=>describeMoves({...info,records:captured},t,false));
   const [seriesData,shareMoves]=await Promise.all([series,moves]).finally(()=>clearTimeout(timeout));
+  signal?.throwIfAborted();
   const {bars:chosen,frame,sourceId,breakAfter,barLevels}=seriesData;
   if(!chosen.length)return null;
   model.interval=t(language,labels[frame]);model.bars=chosen.map(b=>({...b}));model.breakAfter=breakAfter;
@@ -257,7 +262,7 @@ function drawPositions() {
 function chartState() {
   return {interval:activeInterval(),market:market(),sourceId:yearMode ? yearView?.sourceId : (activeInterval()!=='1d' && data.intradaySourceId) || data.sourceId,
     levels,asOf:data.asOf,theme,locale:lang,historical:Boolean(historyView && historyView.kind!=='cycle' || yearMode),yearRange:yearMode || historyView?.kind==='cycle',timeZone:asset.timeZone,
-    currentPrice:data.price,currentTime:data.asOf,moves:currentMoves};
+    currentPrice:data.price,currentTime:data.asOf,moves:currentMoves,base:isCrypto()?asset.base:''};
 }
 function drawChart() {
   const ctx=chartState();

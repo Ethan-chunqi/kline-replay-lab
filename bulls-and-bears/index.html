@@ -16,8 +16,9 @@
   <link rel="apple-touch-icon" href="./brand/liushayu-avatar.jpg">
   <link rel="stylesheet" href="./style.css">
   <link rel="stylesheet" href="./market.css?v=20261122-market-v3">
-  <link rel="stylesheet" href="./share-dialog.css?v=20261122-share">
-  <link rel="stylesheet" href="./position-extras.css?v=20261122-trails">
+  <link rel="stylesheet" href="./share-dialog.css?v=20261122-editorial">
+  <link rel="stylesheet" href="./rocket-dialog.css?v=20261122-editorial">
+  <link rel="stylesheet" href="./position-extras.css?v=20261122-editorial">
   <link rel="stylesheet" href="./market-art.css?v=20261122-market-v3">
   <link rel="stylesheet" href="./paper-trading.css?v=20261122-market-v3">
   <script>
@@ -106,10 +107,10 @@
         <div class="chart-area"><div id="chart"></div><span id="chart-empty"></span></div>
         <div class="chart-foot">
           <div class="chart-legends"><span id="bar-source" class="muted" hidden></span><span class="legend"><i></i><span data-i18n="成交量">成交量</span><span class="muted" id="volume-unit"></span></span><span class="legend"><i class="gold-bar"></i><span data-i18n="金色为周期极值">金色为周期极值</span></span></div>
-          <div class="chart-actions"><button id="cycle-overview" type="button" aria-pressed="false" data-i18n="cycleOverview">查看完整连线</button><button type="button" class="year-range" id="year-range" aria-pressed="false" data-i18n="since2026">2026 年以来</button><select id="view-range" class="small-select" data-i18n-aria="显示范围" aria-label="显示范围"></select><button id="reset" type="button"><svg><use href="#i-reset"/></svg><span data-i18n="重置视图">重置视图</span></button></div>
+          <div class="chart-actions"><button id="rocket-video" type="button" disabled data-i18n="rocketVideo">分享火箭视频</button><button id="cycle-overview" type="button" aria-pressed="false" data-i18n="cycleOverview">查看完整连线</button><button type="button" class="year-range" id="year-range" aria-pressed="false" data-i18n="since2026">2026 年以来</button><select id="view-range" class="small-select" data-i18n-aria="显示范围" aria-label="显示范围"></select><button id="reset" type="button"><svg><use href="#i-reset"/></svg><span data-i18n="重置视图">重置视图</span></button></div>
         </div>
         <div class="move-stats">
-          <div class="move-stat move-low"><div class="move-head"><i aria-hidden="true"></i><span data-i18n="reboundLeg">低点 → 现价</span><b id="move-low-percent">—</b></div><div class="move-volume-line"><span data-i18n="periodVolume">区间成交量</span><strong id="move-low-volume">—</strong><small id="move-low-until"></small></div></div>
+          <div class="move-stat move-low"><div class="move-head"><i aria-hidden="true"></i><span data-i18n="reboundLeg">周期低点 → 现价</span><b id="move-low-percent">—</b></div><div class="move-volume-line"><span data-i18n="periodVolume">区间成交量</span><strong id="move-low-volume">—</strong><small id="move-low-until"></small></div></div>
           <div class="move-stat move-high" id="move-high-summary" hidden><div class="move-head"><i aria-hidden="true"></i><span data-i18n="retreatLeg">高点 → 现价</span><b id="move-high-percent">—</b></div><div class="move-volume-line"><span data-i18n="periodVolume">区间成交量</span><strong id="move-high-volume">—</strong><small id="move-high-until"></small></div></div>
         </div>
         <div class="year-context" id="year-context" hidden>
@@ -140,6 +141,6 @@
     </aside>
     <footer><span><i class="source-dot"></i><span id="foot-source"></span><span class="divider">/</span><span id="zone-label"></span><a id="evidence" target="_blank" rel="noopener noreferrer" data-i18n="东方财富期货" hidden>东方财富期货</a><span class="divider">/</span><a href="./vendor/lightweight-charts-NOTICE.txt" target="_blank" rel="noopener" data-i18n="图表版权">图表版权</a><span class="divider">/</span><a href="./brand/SOURCES.md" target="_blank" rel="noopener" data-i18n="artCredit">图片来源</a></span><span id="updated"></span></footer>
   </main>
-  <script type="module" src="./app.js?v=20261122-trails2"></script>
+  <script type="module" src="./app.js?v=20261122-editorial-2"></script>
 </body>
 </html>

@@ -2,8 +2,9 @@ import {reveal} from '../motion.js?v=20261122-market-v3';
 import {quotePerDollar,fxAsOf,fxSources} from './rates.js?v=20261122-comparisons';
 import {referenceItems} from './reference.js?v=20261122-share';
 
-import {createBundleView} from './bundle-view.js?v=20261122-share';
+import {createBundleView} from './bundle-view.js?v=20261122-editorial-2';
 import {createCatalog} from './catalog.js?v=20261122-comparisons';
+import {quantityUnit} from './quantity.js?v=20261122-editorial-2';
 
 const items=new Map(referenceItems.map(item=>[item.id,item]));
 // Dollar bands keep familiar comparisons and also include every item priced in the band.
@@ -46,13 +47,10 @@ export function formatQuantity(item,amount,currency,lang,t) {
   const key=lang+'/'+decimals;
   if(!numberFormats.has(key))numberFormats.set(key,new Intl.NumberFormat(locale[lang],{maximumFractionDigits:decimals}));
   const number=numberFormats.get(key);
-  let unit=item.unit[langIndex[lang]??0];
-  if(lang==='en' && !decimals && count<1.5 && unit.endsWith('s')) {
-    unit=unit.endsWith('sses')?unit.slice(0,-2):unit.endsWith('ies')?unit.slice(0,-3)+'y':unit.slice(0,-1);
-  }
-  if(!decimals && count<0.5) return t(lang,'eqBelowOne',{unit});
-  if(decimals && count>0 && count<0.5*10**-decimals) return '< '+number.format(10**-decimals)+' '+unit;
-  return number.format(count)+' '+unit;
+  if(!decimals && count<0.5) return t(lang,'eqBelowOne',{unit:quantityUnit(item,lang,'1')});
+  const lessThan=decimals && count>0 && count<0.5*10**-decimals;
+  const value=number.format(lessThan?10**-decimals:count);
+  return (lessThan?'< ':'')+value+' '+quantityUnit(item,lang,value);
 }
 
 export function createEquivalent(host,t,gainKey='eqGain') {
@@ -143,7 +141,7 @@ export function createEquivalent(host,t,gainKey='eqGain') {
       } else {video.removeAttribute('href');video.removeAttribute('title');}
 
       summary.textContent=tr('eqDetails');compareSummary.textContent=tr('eqCompare');
-      quote.textContent=unitPrice+' '+active.currency+' / '+active.unit[id]+' · '+active.asOf;
+      quote.textContent=unitPrice+' '+active.currency+' / '+quantityUnit(active,lang,'1')+' · '+active.asOf;
       note.hidden=lang!=='zh' || !active.noteZh;
       note.textContent=note.hidden?'':active.noteZh;
       source.href=active.sourceUrl;source.textContent=active.sourceName+' ↗';
@@ -176,7 +174,7 @@ export function createEquivalent(host,t,gainKey='eqGain') {
     const {amount,currency,lang}=state;
     const i=langIndex[lang]??0;
     return {mode,services:[{id:active.id,title:active.title[i],quantityText:quantity(active,amount,currency,lang),
-      amountText:active.price.toLocaleString(locale[lang],{maximumFractionDigits:4})+' '+active.currency+' / '+active.unit[i]}]};
+      amountText:active.price.toLocaleString(locale[lang],{maximumFractionDigits:4})+' '+active.currency+' / '+quantityUnit(active,lang,'1')}]};
   },update(amount,currency,lang,symbol,exclude){
     const dollars=Math.abs(usdEquivalent(amount,currency));
     host.hidden=!Number.isFinite(amount)||!Number.isFinite(dollars)||dollars===0;

@@ -1,410 +1,190 @@
-// Rasterize the captured position and OHLC data in the browser. Only first-party images are loaded.
-import {drawMoveTrail,moveTrailColor} from './move-trails.js?v=20261122-trails';
+// A snapshot is drawn locally so the exported numbers and artwork match the selected trade.
+import {layoutShareChart} from './share-chart.js?v=20261122-editorial';
+import {drawText,wrapText,measureText,rule} from './share-poster-type.js?v=20261122-editorial';
 
-const words = {
-  zh: ['你的持仓','做多','做空','理财','未实现盈亏','累计利息','本金收益率','本金','杠杆','K 线','报价','周期低点','低点时间','开仓金额','参考开仓价','开仓基准','开仓时间','购买力换算','单一服务','配套服务','扫码查看行情','投入金额','起息时间','数据时间','年化利率'],
-  en: ['Your positions','Long','Short','Savings','Unrealized P&L','Interest earned','Return on capital','Capital','Leverage','Candles','Quote','Cycle low','Time of low','Entry notional','Entry price','Entry basis','Entry time','Purchasing power','Single item','Bundle','Scan for the market','Amount invested','Interest start','Quote as of','Annual rate'],
-  ja: ['あなたのポジション','ロング','ショート','資産運用','含み損益','累計利息','元本収益率','元本','レバレッジ','ローソク足','価格','サイクル安値','安値の日時','建玉金額','建値','建値の基準','建玉日時','購買力換算','単品','組み合わせ','相場をチェック','運用金額','利息の起算日','価格の日時','年利'],
-  ru: ['Ваши позиции','Лонг','Шорт','Сбережения','Нереализованный результат','Начисленные проценты','Доходность капитала','Капитал','Плечо','Свечи','Котировка','Минимум цикла','Время минимума','Объём при входе','Цена входа','Основание входа','Время входа','Покупательная способность','Один вариант','Набор','Сканируйте для котировок','Начальная сумма','Начало начисления','Время котировки','Годовая ставка'],
-  ko: ['내 포지션','롱','숏','자산 관리','미실현 손익','누적 이자','원금 수익률','원금','레버리지','캔들','시세','사이클 저점','저점 시각','진입 금액','진입 가격','진입 기준','진입 시각','구매력 환산','단일','패키지','시세 확인하기','투입 금액','이자 시작일','시세 시각','연 수익률'],
+const width=1080,margin=58,inner=width-margin*2;
+const langs={zh:'zh-CN',en:'en-GB',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
+const keys=['position','long','short','savings','roi','pnl','interest','capital','notional','buy','sell','customBuy','customSell','current','buyTime','sellTime','low','lowTime','margin','lots','rate','start','tradeDetails','savingDetails','power','single','bundle','time','scan','sim'];
+const copy={
+ zh:['你的持仓','做多','做空','理财','本金收益率','未实现盈亏','累计利息','本金','开仓金额','买入价（周期低点）','卖出价（周期高点）','自定义买入价','自定义卖出价','当前价格','买入时间','卖出时间','周期低点','低点时间','开仓保证金','手数','年化利率','起息时间','成交记录','理财明细','购买力换算','单一服务','配套服务','数据时间','扫码查看行情','模拟结果'],
+ en:['Your positions','Long','Short','Savings','Return on capital','Unrealized P&L','Interest earned','Capital','Entry notional','Buy price · cycle low','Sell price · cycle high','Custom buy price','Custom sell price','Current price','Buy time','Sell time','Cycle low','Time of low','Opening margin','Lots','Annual rate','Interest start','Trade details','Savings details','Purchasing power','Single item','Bundle','Quote as of','Scan for the market','Simulation results'],
+ ja:['あなたのポジション','ロング','ショート','資産運用','元本収益率','含み損益','累計利息','元本','建玉金額','買値（サイクル安値）','売値（サイクル高値）','指定買値','指定売値','現在値','買付日時','売付日時','サイクル安値','安値の日時','当初証拠金','取引枚数','年利','利息の起算日','取引明細','運用明細','購買力換算','単品','組み合わせ','価格の日時','相場をチェック','シミュレーション結果'],
+ ru:['Ваши позиции','Лонг','Шорт','Сбережения','Доходность капитала','Нереализованный результат','Начисленные проценты','Капитал','Объём при входе','Цена покупки · минимум','Цена продажи · максимум','Своя цена покупки','Своя цена продажи','Текущая цена','Время покупки','Время продажи','Минимум цикла','Время минимума','Начальная маржа','Лоты','Годовая ставка','Начало начисления','Детали позиции','Детали вклада','Покупательная способность','Один вариант','Набор','Время котировки','Сканируйте для котировок','Результат моделирования'],
+ ko:['내 포지션','롱','숏','자산 관리','원금 수익률','미실현 손익','누적 이자','원금','진입 금액','매수가 · 주기 저점','매도가 · 주기 고점','지정 매수가','지정 매도가','현재가','매수 시각','매도 시각','주기 저점','저점 시각','개시 증거금','계약 수','연 수익률','이자 시작일','포지션 상세','운용 상세','구매력 환산','단일','패키지','시세 시각','시세 확인하기','모의 결과'],
 };
-const fields=['positions','long','short','savings','pnl','interest','return','capital','leverage','candles','quote','low','lowTime','notional','entryPrice','basis','entryTime','power','single','bundle','scan','investment','interestStart','asOf','rate'];
-const tradeCopy={
-  zh:['买入价（周期低点）','卖出价（周期高点）','买入时间','卖出时间','自定义买入价','自定义卖出价','手数','开仓保证金'],
-  en:['Buy price · cycle low','Sell price · cycle high','Buy time','Sell time','Custom buy price','Custom sell price','Lots','Opening margin'],
-  ja:['買値（サイクル安値）','売値（サイクル高値）','買付日時','売付日時','指定買値','指定売値','取引枚数','当初証拠金'],
-  ru:['Цена покупки · минимум','Цена продажи · максимум','Время покупки','Время продажи','Своя цена покупки','Своя цена продажи','Лоты','Начальная маржа'],
-  ko:['매수가 · 주기 저점','매도가 · 주기 고점','매수 시각','매도 시각','지정 매수가','지정 매도가','계약 수','개시 증거금'],
+const palettes={
+ dark:{page:'#10191e',panel:'#17242a',ink:'#f2f5ef',soft:'#cdd7d5',muted:'#a0b2b3',rule:'#324247',accent:'#f2d396',up:'#74e2b1',down:'#ff9391',ticket:'#213838'},
+ light:{page:'#f6f6ef',panel:'#edefe7',ink:'#112b2d',soft:'#354f50',muted:'#586b69',rule:'#c5cfca',accent:'#80501d',up:'#08784f',down:'#a93f4c',ticket:'#e7ede0'},
 };
-const chartCopy={
-  zh:['低点 → 当前','高点 → 当前','区间成交量','图外时点'],
-  en:['Low → current','High → current','Interval volume','Outside chart range'],
-  ja:['安値 → 現在','高値 → 現在','区間出来高','表示範囲外'],
-  ru:['От минимума','От максимума','Объём за период','Вне диапазона'],
-  ko:['저점 → 현재','고점 → 현재','구간 거래량','차트 범위 밖'],
-};
-const gapCopy={zh:'中间时段已折叠',en:'Intervening dates are folded',ja:'途中の期間を省略',ru:'Средняя часть периода свёрнута',ko:'중간 기간 생략'};
-const locales={zh:'zh-CN',en:'en-US',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
-const font='Geist,"PingFang SC","Hiragino Sans","Apple SD Gothic Neo","Microsoft YaHei",Arial,sans-serif';
-const dark={page:'#0b2125',panel:'#123238',ink:'#f1f6ed',soft:'#c4d4cd',muted:'#a1b9b4',rule:'#315055',accent:'#ffda84',up:'#66e3aa',down:'#ff929e',swell:'#173a3e'};
-const light={page:'#f4f1e9',panel:'#fffdf7',ink:'#183639',soft:'#3e5c5a',muted:'#53706d',rule:'#c5d2c8',accent:'#8b5312',up:'#076943',down:'#ab3049',swell:'#dce6dc'};
-const width=1080, margin=64, inner=width-2*margin;
-const assetRoot=new URL('./',import.meta.url);
-const imageCache=new Map();
-
+const assets=new Map();
 function imageAt(path) {
-  if(!imageCache.has(path)) {
-    const loading=new Promise((resolve,reject)=>{
-      const img=new Image();
-      img.onload=()=>resolve(img);
-      img.onerror=()=>reject(new Error('Poster image unavailable: '+path));
-      img.src=new URL(path,assetRoot).href;
+  if(!assets.has(path)){
+    const pending=new Promise((resolve,reject)=>{
+      const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(Error('Poster artwork unavailable'));
+      img.src=new URL(path,import.meta.url).href;
     });
-    imageCache.set(path,loading);
-    loading.catch(()=>imageCache.delete(path));
+    assets.set(path,pending);pending.catch(()=>assets.delete(path));
   }
-  return imageCache.get(path);
+  return assets.get(path);
 }
-
-function dateLabel(value,locale,zone,opts={}) {
-  if(typeof value==='string') return value;
-  if(!Number.isFinite(value)) return '—';
-  const date=new Date(Math.abs(value)<1e11 ? value*1000 : value);
-  if(Number.isNaN(date.getTime())) return '—';
-  return new Intl.DateTimeFormat(locale,{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit',
-    hour:'2-digit',minute:'2-digit',hourCycle:'h23',...opts}).format(date);
+function rounded(ctx,x,y,w,h,r,color) {
+  ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fillStyle=color;ctx.fill();
 }
-
-function toMs(time) {return Math.abs(time)<1e11?time*1000:time;}
-
-function validatedCandles(input) {
-  const unique=new Map();
-  for (const b of input||[]) {
-    if(!b || ![b.time,b.open,b.high,b.low,b.close].every(Number.isFinite) ||
-       b.low>Math.min(b.open,b.close) || b.high<Math.max(b.open,b.close)) continue;
-    const time=toMs(b.time);
-    unique.set(time,{...b,time});
+function cover(ctx,img,x,y,w,h,r=0) {
+  const s=Math.max(w/img.width,h/img.height),sw=w/s,sh=h/s;
+  ctx.save();ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.clip();
+  ctx.drawImage(img,(img.width-sw)/2,(img.height-sh)/2,sw,sh,x,y,w,h);ctx.restore();
+}
+function hero(ctx,model,words,avatar,shark,saving,short,height) {
+  const navy='#03151c',white='#f1f7f1',sub='#bdcecd',mint='#a0eece',coral='#ffacaa';
+  ctx.save();ctx.beginPath();ctx.rect(0,0,width,height);ctx.clip();
+  ctx.fillStyle=navy;ctx.fillRect(0,0,width,height);
+  if(shark){
+    const w=756,h=w*shark.height/shark.width;
+    ctx.drawImage(shark,width-w,-22,w,h);
+    const scrim=ctx.createLinearGradient(269,0,602,0);
+    scrim.addColorStop(0,navy);scrim.addColorStop(.49,'rgba(3,21,28,.90)');scrim.addColorStop(1,'rgba(3,21,28,0)');
+    ctx.fillStyle=scrim;ctx.fillRect(0,0,603,height);
   }
-  return [...unique.values()].sort((a,b)=>a.time-b.time);
-}
-
-function pen(ctx,size,weight=500) {ctx.font=weight+' '+size+'px '+font;}
-function text(ctx,content,x,y,w,size,ink,{weight=500,align='left',min=18}={}) {
-  const value=String(content??'').trim()||'—';
-  if(w<=0) return;
-  pen(ctx,size,weight);
-  const measured=ctx.measureText(value).width;
-  if(measured>w){pen(ctx,Math.max(min,Math.floor(size*w/measured)),weight);}
-  ctx.fillStyle=ink;ctx.textAlign=align;ctx.fillText(value,x,y,w);ctx.textAlign='left';
-}
-
-function lines(ctx,content,w,size,weight=500) {
-  pen(ctx,size,weight);
-  const value=String(content??'').trim()||'—';
-  const tokens=value.match(/[A-Za-zА-Яа-яЁёÀ-ž0-9][A-Za-zА-Яа-яЁёÀ-ž0-9.,:+%/×–—-]*|\s+|[^\s]/gu)||[value];
-  const result=[];
-  let line='';
-  for(const token of tokens) {
-    if(line.trim() && ctx.measureText(line+token).width>w) {
-      result.push(line.trim());line=token.trimStart();
-    } else line+=token;
-  }
-  if(line.trim())result.push(line.trim());
-  return result;
-}
-
-function rule(ctx,x,y,w,color) {ctx.fillStyle=color;ctx.fillRect(x,y,w,1.5);}
-function rounded(ctx,x,y,w,h,r,fill) {
-  ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fillStyle=fill;ctx.fill();
-}
-function cropped(ctx,img,x,y,size,r) {
-  const sx=img.naturalWidth||img.width, sy=img.naturalHeight||img.height, src=Math.min(sx,sy);
-  ctx.save();ctx.beginPath();ctx.roundRect(x,y,size,size,r);ctx.clip();
-  ctx.drawImage(img,(sx-src)/2,(sy-src)/2,src,src,x,y,size,size);ctx.restore();
-}
-
-// A small, original contour illustration uses the same sea palette as the artwork on the site.
-function swells(ctx,colors) {
-  ctx.save();ctx.beginPath();ctx.rect(700,135,380,192);ctx.clip();ctx.strokeStyle=colors.swell;ctx.lineWidth=2;
-  for(let i=0;i<7;i++){
-    const y=169+12*i;
-    ctx.beginPath();ctx.moveTo(718,y+69);
-    ctx.bezierCurveTo(811,y+43,851,y+113,914,y+48);
-    ctx.bezierCurveTo(945,y+14,984,y-17,999,y-20);
-    ctx.bezierCurveTo(985,y+6,974,y+27,983,y+37);
-    ctx.bezierCurveTo(999,y+50,1048,y+19,1090,y+26);ctx.stroke();
-  }
+  const bottom=ctx.createLinearGradient(0,height-112,0,height);
+  bottom.addColorStop(0,'rgba(3,21,28,0)');bottom.addColorStop(1,'rgba(3,21,28,.88)');
+  ctx.fillStyle=bottom;ctx.fillRect(0,height-112,width,112);
+  cover(ctx,avatar,margin,33,57,57,29);
+  drawText(ctx,'刘鲨鱼',margin+70,29,210,30,white,{weight:685});
+  drawText(ctx,'BULLS & BEARS',margin+71,67,235,17,'#b5ccc7',{weight:560});
+  drawText(ctx,words.position,width-margin,43,315,25,sub,{align:'right',weight:520});
+  drawText(ctx,model.symbol,margin,113,inner,62,white,{weight:710});
+  const side=saving?words.savings:short?words.short:words.long;
+  const sideInk=saving?'#f3d491':model.sideColor?'color-mix(in srgb,'+model.sideColor+' 60%, white)':short?coral:mint;
+  const sw=measureText(ctx,side,25,660)+27;
+  rounded(ctx,margin,185,sw,40,7,'#172d32');
+  drawText(ctx,side,margin+sw/2,191,sw-14,25,sideInk,{weight:660,align:'center'});
+  const exposure=saving?words.rate+' '+(model.annualRateText||'3%'):model.lotsText?words.lots+' '+model.lotsText:model.leverageText;
+  drawText(ctx,[exposure,model.market].filter(Boolean).join('   ·   '),margin+sw+15,191,inner-sw-15,25,sub,{weight:520});
+  drawText(ctx,words.roi,margin,254,610,27,'#c3d4d0',{weight:505});
+  const profit=model.pnl>0?mint:model.pnl<0?coral:white;
+  ctx.save();ctx.letterSpacing='-3px';
+  drawText(ctx,model.roiText,margin-4,283,646,144,profit,{weight:735,min:59});ctx.restore();
+  const label=saving?words.interest:words.pnl;
+  const labelW=drawText(ctx,label,margin,437,330,25,sub,{weight:510});
+  drawText(ctx,model.pnlText,margin+labelW+19,427,inner-labelW-24,40,white,{weight:615});
   ctx.restore();
 }
-
-function chartModel(model,bars) {
-  const currentTime=toMs(model.currentTime??model.chartAsOf);
-  const moves=Number.isFinite(model.currentPrice)&&Number.isFinite(currentTime)?
-    (model.moves||[]).filter(m=>['low','high'].includes(m.kind)&&Number.isFinite(m.price)&&Number.isFinite(m.time)&&toMs(m.time)<=currentTime)
-      .map(m=>({...m,time:toMs(m.time)})).sort((a,b)=>a.kind==='low'?-1:1):[];
-  // Preserve one candle per actual trading interval, including long daily histories.
-  const groups=bars.map(bar=>({...bar,end:bar.time,extremes:['low','high'].filter(kind=>{
-    if(model.extremeTimes?.[kind]!==bar.time)return false;
-    const move=moves.find(m=>m.kind===kind);
-    return !move || move.price===bar[kind];
-  })}));
-  const breakIndex=Number.isFinite(model.breakAfter)?bars.findIndex(bar=>bar.time===model.breakAfter)+1:0;
-  const outside=moves.filter(m=>m.time<bars[0].time);
-  const height=362+(outside.length||breakIndex?33:0)+(moves.length?(moves.length===1?68:92)+(moves.some(m=>m.volumeText)?30:0):0);
-  return {groups,moves,outside,currentTime,height,breakIndex};
+function pricePair(ctx,model,words,c,short,top) {
+  const isCustom=model.entryKind==='custom';
+  const title=short?(isCustom?words.customSell:words.sell):(isCustom?words.customBuy:words.buy);
+  ctx.fillStyle=c.panel;ctx.fillRect(0,top,width,132);
+  const col=(inner-98)/2,x2=width-margin-col;
+  drawText(ctx,title,margin,top+22,col,24,c.muted,{weight:520});
+  drawText(ctx,model.entryPriceText,margin,top+57,col,39,c.ink,{weight:650});
+  drawText(ctx,words.current,x2,top+22,col,24,c.muted,{weight:520});
+  drawText(ctx,model.priceText,x2,top+57,col,39,c.ink,{weight:650});
+  ctx.save();ctx.translate(width/2-21,top+73);ctx.strokeStyle=c.muted;ctx.lineWidth=2.3;ctx.beginPath();
+  ctx.moveTo(0,0);ctx.lineTo(37,0);ctx.moveTo(29,-8);ctx.lineTo(37,0);ctx.lineTo(29,8);ctx.stroke();ctx.restore();
 }
-
-function transactionFields(model,t,trade,savings) {
-  const low=[t.low,model.lowPriceText], lowTime=[t.lowTime,model.lowTimeText];
-  if(savings)return [[[t.capital,model.capitalText],[t.interestStart,model.entryTimeText]],[low,lowTime]];
-  const short=model.side==='short';
-  const funding=[model.lotsText?trade[7]:t.capital,model.capitalText],notional=[t.notional,model.entryNotionalText];
-  if(model.entryKind==='custom') {
-    const price=[trade[short?5:4],model.entryPriceText];
-    if(model.entryPriceText===model.lowPriceText) {
-      price[0]+=' · '+t.low;
-      return [[price,lowTime],[funding,notional]];
-    }
-    return [[price,notional],[low,lowTime],[funding]];
-  }
-  const entries=[[trade[short?1:0],model.entryPriceText],[trade[short?3:2],model.entryTimeText]];
-  const rows=[entries,[funding,notional]];
-  if(short){
-    const remaining=[];
-    if(model.entryPriceText!==model.lowPriceText)remaining.push(low);
-    if(model.entryTimeText!==model.lowTimeText)remaining.push(lowTime);
-    if(remaining.length)rows.push(remaining);
+function recordFields(model,t,saving,short) {
+  if(saving)return [[[t.capital,model.capitalText],[t.start,model.entryTimeText]],[[t.low,model.lowPriceText],[t.lowTime,model.lowTimeText]]];
+  const rows=[[[model.lotsText?t.margin:t.capital,model.capitalText],[t.notional,model.entryNotionalText]]];
+  const execution=[];
+  if(model.entryTimeText)execution.push([short?t.sellTime:t.buyTime,model.entryTimeText]);
+  if(model.markPriceText && model.markPriceText!==model.priceText) execution.push([model.markLabel,model.markPriceText]);
+  if(execution.length)rows.push(execution);
+  if(short || model.entryKind==='custom'){
+    const distinct=[];
+    if(model.entryPriceText!==model.lowPriceText)distinct.push([t.low,model.lowPriceText]);
+    if(model.entryTimeText!==model.lowTimeText)distinct.push([t.lowTime,model.lowTimeText]);
+    if(distinct.length)rows.push(distinct);
   }
   return rows;
 }
-
-function drawChart(ctx,model,chart,y,colors,t,lang,zone) {
-  const {groups,moves,outside,currentTime,height,breakIndex}=chart, locale=locales[lang], labels=chartCopy[lang];
-  const x=margin,w=inner, inset=28;
-  rounded(ctx,x,y,w,height,24,colors.panel);
-  const chartName=[model.interval,t.candles].filter(Boolean).join(' · ');
-  const showQuote=model.priceText && model.markPriceText!==model.priceText;
-  text(ctx,chartName,x+inset,y+21,showQuote?w-355:w-2*inset,31,colors.ink,{weight:650});
-  if(showQuote) text(ctx,t.quote+'  '+model.priceText,x+w-inset,y+25,300,23,colors.soft,{align:'right'});
-  const plotLeft=x+inset,plotTop=y+78,plotBottom=y+256;
-  let cap=Math.max(...groups.map(b=>b.high)),floor=Math.min(...groups.map(b=>b.low));
-  if(moves.length) {
-    cap=Math.max(cap,model.currentPrice,...moves.map(m=>m.price));
-    floor=Math.min(floor,model.currentPrice,...moves.map(m=>m.price));
-  }
-  const pad=Math.max((cap-floor)*.06,Math.abs(cap)*1e-7,1e-12), bottom=floor-pad,top=cap+pad;
-  const priceY=p=>plotTop+(top-p)/(top-bottom)*(plotBottom-plotTop);
-  const digits=Number.isInteger(model.priceDigits)?Math.max(0,Math.min(10,model.priceDigits)):
-    Math.max(0,Math.min(8,Math.ceil(-Math.log10((top-bottom)/4))+1));
-  const numbers=new Intl.NumberFormat(locale,{maximumFractionDigits:digits});
-  const ticks=[cap,(cap+floor)/2,floor], tickLabels=ticks.map(p=>numbers.format(p));
-  pen(ctx,19,490);
-  const axisWidth=Math.min(185,Math.max(70,...tickLabels.map(s=>ctx.measureText(s).width+12)));
-  const plotRight=x+w-inset-axisWidth-8;
-  ticks.forEach((p,i)=>{
-    if(cap===floor && i!==1)return;
-    const py=priceY(p);
-    rule(ctx,plotLeft,py,plotRight-plotLeft,colors.rule);
-    text(ctx,tickLabels[i],x+w-inset,py-10,axisWidth,19,colors.muted,{align:'right'});
+function measureRecords(ctx,rows) {
+  const gap=48,col=(inner-gap)/2;
+  return rows.map(row=>{
+    const cells=row.map(([label,value],i)=>({label,rows:wrapText(ctx,value,col,31,555),x:margin+i*(col+gap),width:col}));
+    return {cells,height:63+Math.max(...cells.map(cell=>cell.rows.length))*38};
   });
-  // Trading time is indexed like a candle chart. An off-screen anchor gets its own
-  // earlier event slot, with a marked axis break before the first actual candle.
-  const earlierTimes=[...new Set(outside.map(m=>m.time))].sort((a,b)=>a-b);
-  const skipWidth=earlierTimes.length?earlierTimes.length*34+28:0;
-  const candleStart=plotLeft+skipWidth;
-  const gapWidth=breakIndex?28:0;
-  const spacing=(plotRight-candleStart-gapWidth)/(groups.length+(moves.length?1:0));
-  const candleX=i=>candleStart+(i+.5)*spacing+(breakIndex && i>=breakIndex?gapWidth:0);
-  const last=groups.at(-1),bodyWidth=Math.min(17,spacing*.69);
-  function xAt(time) {
-    if(time<groups[0].time)return plotLeft+17+34*earlierTimes.indexOf(time);
-    if(time>=last.end) {
-      const edge=candleX(groups.length-1);
-      return currentTime>last.end?edge+(plotRight-4-edge)*Math.min(1,(time-last.end)/(currentTime-last.end)):edge;
+}
+function drawRecords(ctx,layout,title,c,y) {
+  rule(ctx,margin,y,inner,c.rule);
+  drawText(ctx,title,margin,y+25,inner,31,c.ink,{weight:680});
+  y+=84;
+  for(const row of layout){
+    for(const cell of row.cells){
+      drawText(ctx,cell.label,cell.x,y,cell.width,23,c.muted);
+      cell.rows.forEach((line,i)=>drawText(ctx,line,cell.x,y+34+i*38,cell.width,31,c.ink,{weight:555}));
     }
-    const i=groups.findIndex(g=>time<=g.end);
-    if(i<0)return candleX(groups.length-1);
-    const group=groups[i];
-    if(time>=group.time){
-      const within=group.end>group.time?(time-group.time)/(group.end-group.time)-.5:0;
-      return candleX(i)+within*Math.min(bodyWidth,spacing*.85);
-    }
-    const prev=groups[Math.max(0,i-1)];
-    const from=candleX(Math.max(0,i-1));
-    return from+(candleX(i)-from)*(time-prev.end)/(group.time-prev.end);
+    y+=row.height;
   }
-  function drawCandle(b,i) {
-    const cx=candleX(i), up=b.close>=b.open;
-    const marked=b.extremes.length>0;
-    const color=marked?'#ffeb34':up?(model.chartUpColor||colors.up):(model.chartDownColor||colors.down);
-    const edge=colors===dark?'#fff7ab':'#976000';
-    ctx.save();
-    if(marked){ctx.shadowColor='#ffd000';ctx.shadowBlur=8;}
-    ctx.strokeStyle=marked?edge:color;ctx.lineWidth=marked?3:Math.min(1.8,spacing*.44);
-    ctx.beginPath();ctx.moveTo(cx,priceY(b.high));ctx.lineTo(cx,priceY(b.low));ctx.stroke();
-    const bodyY=Math.min(priceY(b.open),priceY(b.close)), bodyHeight=Math.max(2.6,Math.abs(priceY(b.close)-priceY(b.open)));
-    ctx.fillStyle=color;ctx.fillRect(cx-bodyWidth/2,bodyY,bodyWidth,bodyHeight);
-    if(marked){ctx.lineWidth=1.2;ctx.strokeRect(cx-bodyWidth/2,bodyY,bodyWidth,bodyHeight);}
-    ctx.restore();
-  }
-  const maxVol=Math.max(...groups.map(b=>b.volume));
-  groups.forEach((b,i)=>{
-    if(!b.extremes.length)drawCandle(b,i);
-    if(b.volume>0) {
-      const barHeight=29*b.volume/maxVol;
-      const color=b.extremes.length?'#ffeb34':b.close>=b.open?(model.chartUpColor||colors.up):(model.chartDownColor||colors.down);
-      ctx.fillStyle=color;ctx.globalAlpha=.42;ctx.fillRect(candleX(i)-bodyWidth/2,y+295-barHeight,bodyWidth,barHeight);ctx.globalAlpha=1;
-    }
+  return y;
+}
+function measureServices(ctx,items,single) {
+  const textWidth=single?inner-245:inner-152;
+  return items.map(item=>{
+    const size=single?35:29;
+    const groups=single && measureText(ctx,item.title,size,620)>textWidth?item.title.split(/\s+(?=·\s)/):[item.title];
+    const title=groups.flatMap(group=>wrapText(ctx,group,textWidth,size,620));
+    return {title,height:single?Math.max(238,title.length*42+151):Math.max(115,title.length*36+75)};
   });
-  const breaks=[];
-  if(skipWidth)breaks.push(candleStart-14);
-  if(breakIndex)breaks.push((candleX(breakIndex-1)+candleX(breakIndex))/2-4);
-  for(const center of breaks) {
-    ctx.strokeStyle=colors.muted;ctx.lineWidth=2;
-    ctx.beginPath();
-    for(const offset of [0,7]) {ctx.moveTo(center-3+offset,y+294);ctx.lineTo(center+3+offset,y+277);}
-    ctx.stroke();
-  }
-  const theme=colors===dark?'dark':'light';
-  for(const move of moves) {
-    const anchor=groups.findIndex(b=>b.extremes.includes(move.kind));
-    const sx=anchor<0?xAt(move.time):candleX(anchor),sy=priceY(move.price),ex=xAt(currentTime),ey=priceY(model.currentPrice);
-    ctx.save();
-    ctx.beginPath();ctx.rect(plotLeft-4,plotTop-8,plotRight-plotLeft+8,plotBottom-plotTop+16);ctx.clip();
-    drawMoveTrail(ctx,{segment:[sx,sy,ex,ey],kind:move.kind,theme,scale:1.5,phase:null,compact:false});
-    if(anchor<0) {
-      ctx.fillStyle=moveTrailColor(move.kind,theme);ctx.beginPath();ctx.arc(sx,sy,4.5,0,Math.PI*2);ctx.fill();
+}
+function drawServices(ctx,items,art,layout,t,c,single,y) {
+  if(!items.length)return;
+  const total=layout.reduce((h,e)=>h+e.height,0);
+  ctx.fillStyle=c.ticket;ctx.fillRect(0,y,width,96+total);
+  drawText(ctx,t.power,margin,y+31,inner*.6,32,c.ink,{weight:655});
+  drawText(ctx,single?t.single:t.bundle,width-margin,y+39,inner*.34,23,c.muted,{align:'right'});
+  y+=96;
+  items.forEach((item,i)=>{
+    const row=layout[i],h=single?198:90,w=single?211:90;
+    if(art[i])cover(ctx,art[i],margin,y+1,w,h,9);
+    const x=margin+w+(single?31:23),space=width-margin-x;
+    row.title.forEach((line,n)=>drawText(ctx,line,x,y+2+n*(single?42:36),space,single?35:29,c.ink,{weight:620}));
+    const valueTop=y+12+row.title.length*(single?42:36);
+    drawText(ctx,item.quantityText,x,valueTop,single?space:space*.49,single?53:32,c.accent,{weight:665});
+    if(item.amountText){
+      if(single)drawText(ctx,item.amountText,x,valueTop+65,space,24,c.soft);
+      else drawText(ctx,item.amountText,width-margin,valueTop+3,space*.5,27,c.soft,{align:'right'});
     }
-    ctx.restore();
-  }
-  groups.forEach((bar,i)=>{if(bar.extremes.length)drawCandle(bar,i);});
-  if(moves.length) {
-    ctx.fillStyle=colors.ink;ctx.strokeStyle=colors.panel;ctx.lineWidth=2;
-    ctx.beginPath();ctx.arc(xAt(currentTime),priceY(model.currentPrice),6,0,Math.PI*2);ctx.fill();ctx.stroke();
-  }
-  const calendar=new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'});
-  const ymd=time=>{
-    const parts=Object.fromEntries(calendar.formatToParts(time).map(p=>[p.type,p.value]));
-    return [parts.year,parts.month,parts.day].join('/');
-  };
-  const crossYear=ymd(groups[0].time).slice(0,4)!==ymd(last.end).slice(0,4);
-  const stamp=time=>crossYear?ymd(time):dateLabel(time,locale,zone,{year:undefined});
-  text(ctx,stamp(groups[0].time),candleStart,y+309,335,19,colors.muted);
-  if(groups.length>1)text(ctx,stamp(last.end),candleX(groups.length-1),y+309,335,19,colors.muted,{align:'right'});
-  let below=y+351;
-  if(outside.length||breakIndex) {
-    const notes=[outside.length?'//  '+labels[3]:null,breakIndex?'//  '+gapCopy[lang]:null].filter(Boolean);
-    text(ctx,notes.join('   ·   '),plotLeft,below-6,w-2*inset,19,colors.soft);below+=33;
-  }
-  if(moves.length) {
-    rule(ctx,plotLeft,below,w-2*inset,colors.rule);
-    const solo=moves.length===1, column=(w-2*inset)/moves.length;
-    moves.forEach((m,i)=>{
-      const pos=plotLeft+i*column, color=moveTrailColor(m.kind,theme), low=m.kind==='low';
-      drawMoveTrail(ctx,{segment:[pos+3,below+(low?39:21),pos+91,below+(low?21:39)],kind:m.kind,theme,scale:1.2,phase:null});
-      text(ctx,labels[low?0:1],pos+106,below+17,solo?column*.48:column-116,24,colors.soft);
-      if(solo)text(ctx,m.percentText,pos+column,below+11,column*.36,37,color,{weight:680,align:'right'});
-      else text(ctx,m.percentText,pos,below+47,column-16,34,color,{weight:660});
-      const metaTop=below+(solo?65:91);
-      if(m.volumeText)text(ctx,labels[2]+'  '+m.volumeText,pos,metaTop,column-12,20,colors.soft);
-      m.notes.forEach((line,n)=>text(ctx,line,pos,metaTop+(m.volumeText?30:0)+n*25,column-14,20,colors.muted));
-    });
-    const sharedTop=below+(moves.some(m=>m.volumeText)?121:91)+Math.max(...moves.map(m=>m.notes.length))*25;
-    chart.commonNotes.forEach((note,i)=>text(ctx,note,plotLeft,sharedTop+25*i,w-2*inset,20,colors.muted));
-  }
-  return y+height;
+    y+=row.height;
+    if(i<items.length-1)rule(ctx,margin,y-11,inner,c.rule);
+  });
 }
 
 export async function renderSharePoster(model) {
-  const bars=validatedCandles(model.bars);
-  if(!bars.length)throw new Error('No candles available');
-  const lang=Object.hasOwn(words,model.lang)?model.lang:'zh',locale=locales[lang],zone=model.timeZone||'Asia/Shanghai';
-  const t=Object.fromEntries(fields.map((key,index)=>[key,words[lang][index]]));
-  const canvas=document.createElement('canvas');
-  canvas.width=width;
-  const ctx=canvas.getContext('2d',{alpha:false});
-  if(!ctx)throw new Error('Canvas unavailable');
+  const lang=Object.hasOwn(copy,model.lang)?model.lang:'zh';
+  const t=Object.fromEntries(keys.map((key,i)=>[key,copy[lang][i]]));
+  const saving=['savings','bank'].includes(model.side),short=model.side==='short',single=model.mode!=='bundle';
   const list=(model.services||[]).slice(0,5);
-  const [avatar,qr,art]=await Promise.all([
-    imageAt('./brand/liushayu-avatar.jpg'),
+  const [avatar,shark,qr,art]=await Promise.all([
+    imageAt('./brand/liushayu-avatar.jpg'),imageAt('./brand/share-shark.webp').catch(()=>null),
     model.qrImage||imageAt('./brand/share-qr.png'),
-    Promise.all(list.map(row=>/^[a-z0-9-]+$/.test(row.id)?imageAt('./equivalents/art/'+row.id+'.webp'):null)),
-    document.fonts?.load('600 32px Geist'),
+    Promise.all(list.map(s=>/^[a-z0-9-]+$/.test(s.id)?imageAt('./equivalents/art/'+s.id+'.webp'):null)),
+    document.fonts?.load('650 36px Geist'),
   ]);
-  const colors=model.theme==='light'?light:dark;
-  const savings=model.side==='savings'||model.side==='bank';
-  const trade=tradeCopy[lang];
-  const single=model.mode!=='bundle';
-  const signColor=model.pnl<0?colors.down:model.pnl>0?colors.up:colors.ink;
-  const serviceLines=list.map(row=>lines(ctx,row.title,single?inner-198:inner-128,single?35:28,630));
-  const serviceHeights=serviceLines.map(ls=>single?Math.max(170,ls.length*43+103):Math.max(100,ls.length*35+58));
-  const fieldRows=transactionFields(model,t,trade,savings);
-  const column=(inner-36)/2;
-  const detailRows=fieldRows.map(cells=>cells.map(([label,value])=>({label,lines:lines(ctx,value,column,30,580)})));
-  const rowHeight=row=>42+Math.max(...row.map(cell=>cell.lines.length))*36+13;
-  const detailsHeight=detailRows.reduce((sum,row)=>sum+rowHeight(row),0);
-  const serviceHeight=list.length?94+serviceHeights.reduce((a,b)=>a+b,0):0;
-  const chart=chartModel(model,bars);
-  const noteWidth=(inner-56)/Math.max(1,chart.moves.length)-14;
-  const shared=chart.moves.length===2?['untilText','volumeBasis'].filter(key=>chart.moves[0][key] && chart.moves[0][key]===chart.moves[1][key]):[];
-  chart.commonNotes=shared.flatMap(key=>lines(ctx,chart.moves[0][key],inner-56,20));
-  chart.moves.forEach(m=>{
-    m.notes=['untilText','volumeBasis'].filter(key=>m[key] && !shared.includes(key)).flatMap(key=>lines(ctx,m[key],noteWidth,20));
-  });
-  chart.height+=(chart.commonNotes.length+Math.max(0,...chart.moves.map(m=>m.notes.length)))*25;
-  const detailsTop=508,chartTop=detailsTop+detailsHeight+20,serviceTop=chartTop+chart.height+30,footerTop=serviceTop+serviceHeight+20;
-  canvas.height=footerTop+211;
-  ctx.textBaseline='top';ctx.fillStyle=colors.page;ctx.fillRect(0,0,width,canvas.height);
-  swells(ctx,colors);
-  cropped(ctx,avatar,margin,53,65,32);
-  text(ctx,'刘鲨鱼',margin+82,44,220,41,colors.ink,{weight:730});
-  text(ctx,'BULLS & BEARS',margin+82,94,265,20,colors.muted,{weight:600});
-  const pill=t.positions;
-  pen(ctx,24,630);const pillWidth=ctx.measureText(pill).width+45;
-  rounded(ctx,width-margin-pillWidth,62,pillWidth,45,22,colors.swell);
-  text(ctx,pill,width-margin-pillWidth/2,72,pillWidth-21,24,colors.soft,{align:'center',weight:630});
-  rule(ctx,margin,136,inner,colors.rule);
-  text(ctx,model.symbol,margin,158,inner,53,colors.ink,{weight:720,min:29});
-  const side=(savings?t.savings:model.side==='short'?t.short:t.long);
-  pen(ctx,24,650);const sideWidth=ctx.measureText(side).width+30;
-  rounded(ctx,margin,223,sideWidth,38,7,colors.panel);
-  text(ctx,side,margin+sideWidth/2,229,sideWidth-12,24,model.sideColor||(savings?colors.accent:model.side==='short'?colors.down:colors.up),{align:'center',weight:650});
-  const exposure=savings?t.rate+' '+(model.annualRateText||'3%'):model.lotsText?trade[6]+' '+model.lotsText:model.leverageText;
-  text(ctx,[exposure,model.market].filter(Boolean).join('   ·   '),margin+sideWidth+18,230,inner-sideWidth-18,24,colors.soft,{weight:560});
-  text(ctx,t.return,margin,282,inner,25,colors.soft);
-  text(ctx,model.roiText,margin-4,307,inner,124,signColor,{weight:740,min:54});
-  const showMark=!savings && model.markPriceText;
-  text(ctx,savings?t.interest:t.pnl,margin,432,showMark?inner*.56:inner,23,colors.muted);
-  text(ctx,model.pnlText,margin,459,showMark?inner*.56:inner,34,colors.ink,{weight:640});
-  if(showMark){
-    text(ctx,model.markLabel,margin+inner,432,inner*.41,23,colors.muted,{align:'right'});
-    text(ctx,model.markPriceText,margin+inner,459,inner*.41,33,colors.ink,{weight:600,align:'right'});
-  }
-  let y=detailsTop;
-  for(const row of detailRows) {
-    rule(ctx,margin,y,inner,colors.rule);
-    row.forEach((cell,i)=>{
-      const x=margin+i*(column+36);
-      text(ctx,cell.label,x,y+9,column,21,colors.muted);
-      cell.lines.forEach((s,n)=>text(ctx,s,x,y+40+36*n,column,30,colors.ink,{weight:580}));
-    });
-    y+=rowHeight(row);
-  }
-  drawChart(ctx,model,chart,chartTop,colors,t,lang,zone);
-  y=serviceTop;
-  if(list.length) {
-    rule(ctx,margin,y,inner,colors.rule);
-    text(ctx,t.power,margin,y+29,inner-330,38,colors.ink,{weight:690});
-    text(ctx,(single?t.single:t.bundle),width-margin,y+40,315,22,colors.muted,{align:'right'});
-    y+=94;
-    list.forEach((service,i)=>{
-      const size=single?145:76, inset=single?175:100;
-      const titleSize=single?35:28, titleStep=single?43:35, contentWidth=inner-inset;
-      if(art[i])cropped(ctx,art[i],margin,y+4,size,single?18:12);
-      const sx=margin+inset;
-      serviceLines[i].forEach((s,j)=>text(ctx,s,sx,y+7+titleStep*j,contentWidth,titleSize,colors.ink,{weight:630}));
-      const afterTitle=y+12+titleStep*serviceLines[i].length;
-      if(single) {
-        text(ctx,service.quantityText,sx,afterTitle,contentWidth,43,colors.accent,{weight:690});
-        if(service.amountText)text(ctx,service.amountText,sx,afterTitle+51,contentWidth,23,colors.soft);
-      } else {
-        const quantity=service.quantityText||'—', amount=service.amountText||'—';
-        text(ctx,quantity,sx,afterTitle,contentWidth*.46,25,colors.accent,{weight:600});
-        text(ctx,amount,width-margin,afterTitle,contentWidth*.52,25,colors.soft,{align:'right',weight:600});
-      }
-      y+=serviceHeights[i];
-      if(i<list.length-1)rule(ctx,margin,y-6,inner,colors.rule);
-    });
-  }
-  rule(ctx,margin,footerTop,inner,colors.rule);
-  const footerWidth=inner-202;
-  text(ctx,'@LiuShaYu2026',margin,footerTop+30,footerWidth,34,colors.ink,{weight:680});
-  const asOf=model.asOfText||dateLabel(model.asOf,locale,zone);
-  text(ctx,t.asOf+'  '+asOf,margin,footerTop+84,footerWidth,22,colors.soft);
-  const context={zh:'模拟结果',en:'Simulation results',ja:'シミュレーション結果',ru:'Результат моделирования',ko:'모의 결과'}[lang];
-  text(ctx,context+'  ·  '+t.scan,margin,footerTop+131,footerWidth,23,colors.muted);
-  const qrSize=134,qrX=width-margin-qrSize;
-  rounded(ctx,qrX-6,footerTop+21,qrSize+12,qrSize+12,10,'#fff');
-  ctx.imageSmoothingEnabled=false;ctx.drawImage(qr,qrX,footerTop+27,qrSize,qrSize);ctx.imageSmoothingEnabled=true;
+  const canvas=document.createElement('canvas');canvas.width=width;
+  const ctx=canvas.getContext('2d',{alpha:false});
+  if(!ctx)throw Error('Canvas unavailable');
+  const c=palettes[model.theme]||palettes.dark,heroHeight=495;
+  const chartTop=heroHeight+(saving?0:132)+41;
+  const chart=layoutShareChart(ctx,saving?model:{...model,priceText:''},{
+    x:margin,y:chartTop,width:inner,lang,locale:langs[lang],zone:model.timeZone||'Asia/Shanghai',colors:c});
+  const records=measureRecords(ctx,recordFields(model,t,saving,short));
+  const services=measureServices(ctx,list,single);
+  const recordTop=chartTop+chart.height+30;
+  const serviceTop=recordTop+84+records.reduce((h,r)=>h+r.height,0);
+  const footer=serviceTop+(list.length?96+services.reduce((h,r)=>h+r.height,0):0);
+  canvas.height=Math.ceil(footer+190);
+  ctx.fillStyle=c.page;ctx.fillRect(0,0,width,canvas.height);
+  hero(ctx,model,t,avatar,shark,saving,short,heroHeight);
+  if(!saving)pricePair(ctx,model,t,c,short,heroHeight);
+  chart.draw(ctx);
+  drawRecords(ctx,records,saving?t.savingDetails:t.tradeDetails,c,recordTop);
+  drawServices(ctx,list,art,services,t,c,single,serviceTop);
+  if(!list.length)rule(ctx,margin,footer,inner,c.rule);
+  drawText(ctx,'@LiuShaYu2026',margin,footer+29,inner-180,37,c.ink,{weight:655});
+  drawText(ctx,t.time+'  '+(model.asOfText||'—'),margin,footer+88,inner-178,23,c.soft);
+  drawText(ctx,t.sim+'  ·  '+t.scan,margin,footer+130,inner-178,23,c.muted);
+  const size=127,qx=width-margin-size,qy=footer+30;
+  rounded(ctx,qx-5,qy-5,size+10,size+10,6,'#fff');
+  ctx.imageSmoothingEnabled=false;ctx.drawImage(qr,qx,qy,size,size);ctx.imageSmoothingEnabled=true;
   return canvas;
 }

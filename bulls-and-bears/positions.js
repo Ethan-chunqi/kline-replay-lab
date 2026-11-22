@@ -1,7 +1,7 @@
 import {perpetualSources,bitgetPath,venueNames} from './perpetuals.js?v=20261122-market-v3';
 import {quotePerDollar,fxAsOf} from './equivalents/rates.js?v=20261122-market-v3';
-import { createEquivalent } from './equivalents/view.js?v=20261122-share';
-import { createBankComparison } from './bank.js?v=20261122-share';
+import { createEquivalent } from './equivalents/view.js?v=20261122-editorial-2';
+import { createBankComparison } from './bank.js?v=20261122-editorial-2';
 import { parseAmount, readPrincipal } from './metrics.js?v=20261122-market-v3';
 
 const storageKey = 'market-positions-v1';
@@ -77,6 +77,8 @@ function card(side) {
     '</span></div><div class="result-price"><strong id="' + side + '-pnl">—</strong><span data-unit="currency"></span></div>' +
     '<div class="position-metrics"><div>' + label('returnOnCapital') + ' <b id="' + side + '-roi">—</b></div><div>' +
     label(short?'priceDrawdown':'priceRebound') + ' <b id="' + (short?'drawdown':'rebound') + '">—</b></div></div>' +
+    '<div class="entry-compare"><div>'+label(short?'sellPoint':'buyPoint')+'<b id="'+side+'-point-price">—</b></div>'+
+    '<div>'+label('currentTradePrice')+'<b id="'+side+'-current-price">—</b></div></div>'+
     '<div class="value-equivalent" hidden></div><p class="position-risk" id="' + side + '-risk" hidden></p>' +
     '<details class="position-details">' + detailsToggle() + cycleDetails(short) + '<dl class="position-table">' + rows + '</dl></details>'+shareButton(side)+'</article>';
 }
@@ -317,6 +319,8 @@ export function createPositions(host,{t,onShare}) {
       write(side+'-quantity',Number.isFinite(quantity) ? num(lang,quantity,0,8)+' '+quantityUnit : '—');
       write(side+'-value',money(result?.value));
       write(side+'-entry',price(entry));
+      write(side+'-point-price',price(entry));
+      write(side+'-current-price',price(state.lastPrice));
       write(side+'-mark',price(estimate));
       write(side+'-mark-label',tr(hasMark ? '标记价格' : index ? '指数点位' : '最新成交价'));
       write(side+'-value-label',tr(index ? '模拟敞口' : '当前持仓价值'));

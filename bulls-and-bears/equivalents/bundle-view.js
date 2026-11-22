@@ -1,5 +1,6 @@
 import {buildBundle} from './bundle.js?v=20261122-comparisons';
 import {referenceItems} from './reference.js?v=20261122-share';
+import {quantityUnit} from './quantity.js?v=20261122-editorial-2';
 const languages={zh:0,en:1,ja:2,ru:3,ko:4};
 const locales={zh:'zh-CN',en:'en-US',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
 
@@ -40,7 +41,8 @@ export function createBundleView(host,t) {
       }
     }
     services=bundle.lines.map((line,i)=>{
-      const value=(line.measured?weight:integers).format(line.quantity)+' '+line.item.unit[language];
+      const number=(line.measured?weight:integers).format(line.quantity);
+      const value=number+' '+quantityUnit(line.item,lang,number);
       const subtotal=money(line.amount);
       if(rows[i].quantity.textContent!==value) rows[i].quantity.textContent=value;
       if(rows[i].cost.textContent!==subtotal) rows[i].cost.textContent=subtotal;

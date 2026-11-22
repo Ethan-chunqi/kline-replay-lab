@@ -1,4 +1,4 @@
-import {createEquivalent} from './equivalents/view.js?v=20261122-share';
+import {createEquivalent} from './equivalents/view.js?v=20261122-editorial-2';
 
 // ACT/365 fixed, simple interest with a common start for all markets.
 const startMs = Date.parse('2026-01-01T00:00:00+08:00');

@@ -1,4 +1,4 @@
-import {drawMoves} from './chart-moves.js?v=20261122-trails';
+import {drawMoves} from './chart-moves.js?v=20261122-editorial';
 import {koreanHours} from './equities/korea-session.js?v=20261122-market-v3';
 import {
   CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineStyle, TickMarkType, createChart,
@@ -216,7 +216,8 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       layout: { background: { type: ColorType.Solid, color: palette.background }, textColor: palette.axis },
       localization: { locale, priceFormatter: price => numbers.format(price), timeFormatter: dates.full },
       grid: { horzLines: { color: palette.grid } },
-      timeScale: { minBarSpacing:view.yearRange ? 0.001 : 0.3, borderColor: palette.grid, timeVisible: view.interval !== '1d', tickMarkFormatter: dates.tick },
+      timeScale: { minBarSpacing:view.yearRange ? 0.001 : 0.3, borderColor: palette.grid, timeVisible: view.interval !== '1d',
+        fixLeftEdge:view.interval==='1m',fixRightEdge:view.interval==='1m',tickMarkFormatter:dates.tick },
       crosshair: { vertLine: { ...cross }, horzLine: { ...cross } },
     });
     candles.applyOptions({ upColor: palette.up, downColor: palette.down, wickUpColor: palette.up, wickDownColor: palette.down,
@@ -237,7 +238,8 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     const minBars = view.interval === '1d' && selectedHours < 24 * 7 ? 90 : 1;
     const first = view.yearRange ? 0 : Math.max(0, Math.min(byHours, rows.length - minBars));
     candles.priceScale().setAutoScale(true);
-    chart.timeScale().setVisibleLogicalRange({ from: first - 0.5, to: last + 2.5 });
+    const range=view.interval==='1m' ? {from:first,to:last} : {from:first-0.5,to:last+2.5};
+    chart.timeScale().setVisibleLogicalRange(range);
   }
   function hover(event) {
     // LWC recalculates its crosshair after setVisibleLogicalRange. Its synthetic
@@ -264,6 +266,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
     if (switched) { hovered = null; focused = null; onHover(null); }
     view = next;
     selectedHours = Number.isFinite(windowHours) && windowHours > 0 ? windowHours : 24;
+    let resetRange=!previous.length || oldHours!==selectedHours;
     const palette = configure(latestPrice ?? items.at(-1)?.close);
     const exchange = region(view);
     matches = { high: findLevelIndex(items, view, 'high'), low: findLevelIndex(items, view, 'low') };
@@ -307,8 +310,13 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       candles.setData(rows);
       volume.setData(rows.map(volumeBar));
       if (rows.length && previous.length && visible && oldHours === selectedHours) {
+        const disjoint=rows[0].time>previous.at(-1).time || rows.at(-1).time<previous[0].time;
         const index = rows.findIndex(b => b.time === previous[anchor].time);
-        if (index >= 0 || followsLatest) {
+        if (disjoint && view.interval==='1m') {
+          // A bundled minute snapshot and the live page may have no common bar.
+          // Its logical indexes no longer identify the historical viewport.
+          resetRange=true;
+        } else if (index >= 0 || followsLatest) {
           const offset = followsLatest ? rows.length - previous.length : index - anchor;
           chart.timeScale().setVisibleLogicalRange({ from: visible.from + offset, to: visible.to + offset });
         }
@@ -325,7 +333,7 @@ export function createChartView(container, onHover = () => {}, options = {}) {
       if (line) line.applyOptions(opts);
       else line = candles.createPriceLine({ ...opts, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '' });
     }
-    if (!previous.length || oldHours !== selectedHours) reset();
+    if (resetRange) reset();
     if (hovered != null) onHover(byTime.get(hovered) ?? null);
     if (!last) onHover(null);
     invalidateOverlays();

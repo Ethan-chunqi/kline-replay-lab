@@ -8,3 +8,5 @@ The market header serves optimized WebP derivatives locally. CSS controls contra
 - *Flag of the People's Republic of China*, public domain. [Wikimedia Commons file and licensing](https://commons.wikimedia.org/wiki/File:Flag_of_the_People%27s_Republic_of_China.svg)
 - *Flag of South Korea*, public domain. [Wikimedia Commons file and licensing](https://commons.wikimedia.org/wiki/File:Flag_of_South_Korea.svg)
 - Liang Wenfeng (梁文锋), DeepSeek founder. The China A-share header uses an original AI-assisted editorial illustration. The individual is identified at the right of the municipal news photograph in [Hangzhou's report on the premier's AI roundtable](https://www.ehangzhou.gov.cn/2025-01/22/c_292410.htm).
+
+- The metallic shark in the share poster is original artwork generated for Bulls & Bears with ImageGen.

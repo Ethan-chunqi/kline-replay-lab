@@ -1,4 +1,4 @@
-import {drawMoveTrail,moveTrailColor} from './move-trails.js?v=20261122-trails';
+import {drawMoveTrail,moveTrailColor} from './move-trails.js?v=20261122-editorial';
 
 export function movesForInterval(moves,interval) {
   return interval==='1d'?moves:moves.filter(move=>move.kind==='low');
@@ -11,6 +11,29 @@ const labels={
   ja:['安値から','高値から','出来高'], ru:['От минимума','От максимума','Объём'],
   ko:['저점 대비','고점 대비','거래량'],
 };
+const windowLabel={zh:'可见低点反弹',en:'From visible low',ja:'表示範囲の安値比',ru:'От минимума окна',ko:'화면 저점 대비'};
+
+// A short intraday window may start long after the cycle low. Use an actual
+// visible wick for that window instead of projecting the off-screen cycle line.
+function intradayLow(rows,move,quote,width,range,match,currentOnLast,lang,base) {
+  if(!currentOnLast || !range)return null;
+  const last=rows.length-1;
+  const first=Math.max(0,Math.ceil(range.from));
+  if(first>last || range.to<last)return null;
+  if(match>=first && match<=last)return {move,index:match};
+  let index=-1;
+  for(let i=first;i<=last;i++){
+    if(rows[i].epoch+width<=move.time)continue;
+    if(index<0 || rows[i].low<rows[index].low)index=i;
+  }
+  if(index<0)return null;
+  const candle=rows[index],change=quote.price/candle.low-1;
+  const digits=change && Math.abs(change)<.0001?Math.min(10,Math.ceil(-Math.log10(Math.abs(change)))):2;
+  const percentText=(change>0?'+':'')+change.toLocaleString(lang,{style:'percent',minimumFractionDigits:digits,maximumFractionDigits:digits});
+  const volume=base?rows.slice(index).reduce((sum,row)=>sum+row.volume,0):NaN;
+  const volumeText=Number.isFinite(volume)?volume.toLocaleString(lang,{maximumFractionDigits:4})+' '+base:'';
+  return {index,move:{kind:'low',price:candle.low,time:candle.epoch,percentText,volumeText,visibleLow:true}};
+}
 function indexAt(rows,time,width) {
   let a=0,b=rows.length;
   while(a<b) {
@@ -67,7 +90,7 @@ function paintLabel(ctx,size,{segment,move,color},theme,locale,occupied) {
   const [x0,y0,x1,y1]=segment;
   const compact=size.width<430, words=labels[locale]||labels.en;
   const font='system-ui, sans-serif';
-  const head=words[move.kind==='low'?0:1]+'  '+move.percentText;
+  const head=(move.visibleLow?(windowLabel[locale]||windowLabel.en):words[move.kind==='low'?0:1])+'  '+move.percentText;
   const meta=[move.durationText,move.volumeText && (words[2]+' '+move.volumeText)].filter(Boolean);
   const textWidth=Math.max(10,Math.min(compact?158:238,size.width-18));
   ctx.font='600 11px '+font;
@@ -99,9 +122,16 @@ export function drawMoves({ctx,size,rows,matches,view,currentOnLast,width,scale,
   const quote={time:view.currentTime,price:view.currentPrice};
   const visible=[];
   ctx.save();ctx.beginPath();ctx.rect(0,0,size.width,size.height);ctx.clip();
-  for(const move of movesForInterval(view.moves,view.interval)) {
+  const range=scale.getVisibleLogicalRange();
+  for(let move of movesForInterval(view.moves,view.interval)) {
     if(move.kind!=='low' && move.kind!=='high')continue;
-    const span=moveSpan(rows,move,quote,width,currentOnLast,matches[move.kind]);
+    let index=matches[move.kind];
+    if(view.interval!=='1d'){
+      const local=intradayLow(rows,move,quote,width,range,index,currentOnLast,view.locale,view.base);
+      if(!local)continue;
+      move=local.move;index=local.index;
+    }
+    const span=moveSpan(rows,move,quote,width,currentOnLast,index);
     if(!span)continue;
     const x0=scale.logicalToCoordinate(span.start.index),y0=series.priceToCoordinate(span.start.price);
     const x1=scale.logicalToCoordinate(span.end.index),y1=series.priceToCoordinate(span.end.price);
@@ -110,6 +140,9 @@ export function drawMoves({ctx,size,rows,matches,view,currentOnLast,width,scale,
     const color=moveTrailColor(move.kind,view.theme);
     const offsetPhase=phase==null?null:(phase+(move.kind==='high'?.26:0))%1;
     drawMoveTrail(ctx,{segment,kind:move.kind,theme:view.theme,phase:offsetPhase,compact:size.width<430});
+    if(move.visibleLow && x0>=0 && y0>=0 && x0<=size.width && y0<=size.height) {
+      ctx.fillStyle=color;ctx.beginPath();ctx.arc(x0,y0,3,0,2*Math.PI);ctx.fill();
+    }
     if(span.actualEnd && x1>=0 && x1<=size.width && y1>=0 && y1<=size.height){
       ctx.strokeStyle=color;ctx.lineWidth=1.8;ctx.fillStyle=view.theme==='light'?'#fff':'#181a20';
       ctx.beginPath();ctx.arc(x1,y1,3.1,0,2*Math.PI);ctx.fill();ctx.stroke();

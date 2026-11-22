@@ -83,7 +83,13 @@ function satellite(ctx) {
   ctx.quadraticCurveTo(3.8,0,9,3.6);ctx.closePath();ctx.fill();ctx.stroke();
 }
 
-export function drawMoveTrail(ctx,{segment,kind,theme='dark',phase=null,scale=1,compact=false}) {
+// Align the rocket's nose with an exact point on a measured move.
+export function drawRocketAt(ctx,{x,y,angle,scale=1,pulse=0}) {
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.scale(scale,scale);ctx.translate(-11.8,0);
+  plume(ctx,false,pulse);rocket(ctx);ctx.restore();
+}
+
+export function drawMoveTrail(ctx,{segment,kind,theme='dark',phase=null,scale=1,compact=false,craft=true}) {
   const color=(paint[theme]||paint.dark)[kind];
   if(!color || !segment || segment.length!==4 || !segment.every(Number.isFinite) || !(scale>0))return;
   const [x0,y0,x1,y1]=segment;
@@ -109,7 +115,7 @@ export function drawMoveTrail(ctx,{segment,kind,theme='dark',phase=null,scale=1,
 
   const craftScale=Math.min(compact?.82:1,length/58);
   const margin=34*craftScale;
-  if(craftScale>=.55) {
+  if(craft && craftScale>=.55) {
     const moving=Number.isFinite(phase);
     const progress=moving?((phase%1)+1)%1:(falling?.37:.68);
     const nose=margin+(length-margin-15*craftScale)*progress;
