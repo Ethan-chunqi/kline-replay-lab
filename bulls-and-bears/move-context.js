@@ -2,12 +2,21 @@ import {loadPeriodVolume} from './period-volume.js?v=20261122-share';
 
 const locales={zh:'zh-CN',en:'en-GB',ja:'ja-JP',ru:'ru-RU',ko:'ko-KR'};
 const formats=new Map();
+const stampFormats=new Map();
 function validAt(result,asOf) {
   return result && result.to<=asOf && asOf-result.to<=900000;
 }
+function pointPrecision(point) {
+  return point.precisionMs??({day:86400000,'15m':900000,minute:60000,quote:1000}[point.precision]??60000);
+}
+function precisionLabel(ms,lang,t) {
+  if(ms>=86400000)return t(lang,'dailyPrecision');
+  if(ms>=60000)return t(lang,'barPrecision',{count:ms/60000});
+  return '';
+}
 export function marketTime(point,lang,timeZone,t) {
   if(!Number.isFinite(point?.time))return '—';
-  const precision=point.precisionMs??({day:86400000,minute:60000,quote:1000}[point.precision]??60000);
+  const precision=pointPrecision(point);
   const day=precision>=86400000;
   const granularity=day?'day':precision>=60000?'minute':precision>=1000?'second':'millisecond';
   const key=[lang,timeZone,granularity].join('/');
@@ -19,9 +28,30 @@ export function marketTime(point,lang,timeZone,t) {
     formats.set(key,new Intl.DateTimeFormat(locales[lang],options));
   }
   const stamp=formats.get(key).format(point.time);
-  if(day)return stamp+' · '+t(lang,'dailyPrecision');
-  if(precision>=60000)return stamp+' · '+t(lang,'barPrecision',{count:precision/60000});
-  return stamp;
+  const label=precisionLabel(precision,lang,t);
+  return label?stamp+' · '+label:stamp;
+}
+
+// A share needs separately positioned date, clock, and UTC offset. Build these
+// only on demand and never infer a time of day from a daily candle's midnight.
+export function marketStamp(point,lang,timeZone,t) {
+  if(!Number.isFinite(point?.time)||Math.abs(point.time)>8.64e15)return null;
+  const key=lang+'/'+timeZone;
+  if(!stampFormats.has(key)) {
+    const date=new Intl.DateTimeFormat(locales[lang],{timeZone,year:'numeric',month:'2-digit',day:'2-digit'});
+    const clock=new Intl.DateTimeFormat('en-GB',{timeZone,hourCycle:'h23',hour:'2-digit',minute:'2-digit',
+      second:'2-digit',fractionalSecondDigits:3,timeZoneName:'shortOffset'});
+    stampFormats.set(key,{date,clock});
+  }
+  const format=stampFormats.get(key),ms=pointPrecision(point);
+  const parts=Object.fromEntries(format.clock.formatToParts(point.time).map(part=>[part.type,part.value]));
+  let clock='';
+  if(ms<86400000) {
+    clock=parts.hour+':'+parts.minute;
+    if(ms<60000)clock+=':'+parts.second;
+    if(ms<1000)clock+='.'+parts.fractionalSecond;
+  }
+  return {date:format.date.format(point.time),clock,zone:parts.timeZoneName,precision:precisionLabel(ms,lang,t)};
 }
 
 export function createMoveVolumes(onChange) {
@@ -76,7 +106,7 @@ export function describeMoves({levels,records,price,asOf,lang,timeZone,base},t,p
     const timeText=marketTime(refined,lang,timeZone,t);
     const untilText=result?t(lang,'measuredUntil',{time:marketTime({time:result.to,precisionMs:1000},lang,timeZone,t)}):'';
     const volumeBasis=result?.fromMinute?t(lang,'moveFromMinute',{count:1}):'';
-    moves.push({kind,price:point.price,time:refined.time,timeText,percentText,volumeText,untilText,volumeBasis,volume:result?.volume,volumeTo:result?.to});
+    moves.push({kind,price:point.price,time:refined.time,precisionMs:pointPrecision(refined),timeText,percentText,volumeText,untilText,volumeBasis,volume:result?.volume,volumeTo:result?.to});
   }
   return moves;
 }

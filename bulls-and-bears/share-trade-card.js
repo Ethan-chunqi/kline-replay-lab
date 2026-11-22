@@ -15,7 +15,10 @@ const themes={
   dark:{page:'#0d191c',hero:'#102024',wash:'#304047',paper:'#152427',ink:'#f3f4ed',muted:'#a9bcb9',sub:'#c8d3cd',line:'#34484b',gain:'#81efaa',loss:'#ff97a8',detail:'#e1e9e1',gold:'#f1c77f'},
   light:{page:'#f7f7f0',hero:'#e9eee5',wash:'#c8d4c8',paper:'#fffef8',ink:'#152c2b',muted:'#4e6662',sub:'#37544c',line:'#bfcec3',gain:'#095e42',loss:'#a22542',detail:'#283f3a',gold:'#805821'},
 };
-const scan={zh:'扫码查看行情',en:'Scan for market data',ja:'スキャンして相場を見る',ru:'Сканируйте, чтобы открыть котировки',ko:'스캔하여 시세 보기'};
+const timeZoneLabels={zh:'时间均为',en:'Times in',ja:'時刻はすべて',ru:'Часовой пояс',ko:'시간대'};
+const lastTrade={zh:'最新成交价',en:'Last traded price',ja:'直近約定価格',ru:'Последняя цена',ko:'최근 체결가'};
+const pnlMark={zh:'盈亏标记价',en:'P&L mark',ja:'損益マーク価格',ru:'Марк. цена',ko:'손익 표시가'};
+const scan={zh:'扫码查看行情',en:'Scan for quotes',ja:'相場を見る',ru:'Открыть котировки',ko:'시세 보기'};
 const art=new Map();
 
 function loadArt(file) {
@@ -39,24 +42,25 @@ function rule(ctx,x,y,w,color) {
 
 // Keep the currency next to the number while giving the two separate typographic weights.
 function amount(ctx,value,x,y,width,size,unitSize,color,unitColor,weight=630) {
-  const match=String(value||'—').match(/^(.*\d)\s+([^\s\d]+)$/u);
-  if(!match)return text(ctx,value,x,y,width,size,color,weight);
-  const [,digits,unit]=match;
+  const {number:digits,unit}=moneyParts(value);
+  if(!unit)return text(ctx,digits,x,y,width,size,color,weight);
   const numberW=measureText(ctx,digits,size,weight);
   const unitW=measureText(ctx,unit,unitSize,520);
-  const gap=Math.ceil(unitSize*.36);
+  const gap=Math.ceil(unitSize*.56);
   const scale=Math.min(1,width/(numberW+unitW+gap));
   const n=text(ctx,digits,x,y+(1-scale)*size*.65,numberW*scale+.4,size*scale,color,weight);
   text(ctx,unit,x+n+gap*scale,y+(1-scale)*size*.65+(size-unitSize)*scale*.83,
     unitW*scale+.4,unitSize*scale,unitColor,520);
 }
-function ticketTime(stamp) {
-  if(!stamp)return '';
-  const [clock,...accuracy]=String(stamp).split(' · ');
-  const zone=clock.match(/(?:GMT|UTC)[+−-]\d{1,2}(?::\d{2})?/u);
-  if(!zone || zone.index+zone[0].length===clock.length)return stamp;
-  const value=clock.replace(zone[0],'').replace(/\s+/g,' ').trim();
-  return [value+'  '+zone[0],...accuracy].join(' · ');
+// Older frozen cards only stored the localized text. Keep their original date and precision.
+function stampFromText(stamp) {
+  if(!stamp || stamp==='—')return null;
+  const [main,...notes]=String(stamp).split(' · ');
+  const zone=main.match(/(?:GMT|UTC)(?:[+−-]\d{1,2}(?::\d{2})?)?/u)?.[0]||'';
+  const local=main.replace(zone,'').replace(/\s+/gu,' ').trim();
+  const date=local.match(/^\d{1,4}[./ -]+\d{1,2}[./ -]+\d{1,4}\.?/u)?.[0]||local;
+  const clock=local.slice(date.length).replace(/^[,\s]+/u,'');
+  return {date,clock,zone,precision:notes.join(' · ')};
 }
 function savingsQuote(model,lang) {
   if(!Number.isFinite(model.asOf))return '';
@@ -65,14 +69,14 @@ function savingsQuote(model,lang) {
     hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23',timeZoneName:'shortOffset',
   }).format(model.asOf);
 }
-function heroArt(ctx,img,c,short) {
+function heroArt(ctx,img,c,short,bottom) {
   const glow=ctx.createRadialGradient(887,272,20,887,272,433);
   glow.addColorStop(0,c.wash);glow.addColorStop(1,c.hero);
-  ctx.fillStyle=glow;ctx.fillRect(0,0,W,747);
+  ctx.fillStyle=glow;ctx.fillRect(0,0,W,bottom);
   if(!img)return;
-  const size=short?426:380;
+  const size=short?340:312;
   ctx.save();ctx.globalAlpha=.88;
-  ctx.drawImage(img,R-size+18,short?92:111,size,size);
+  ctx.drawImage(img,R-size+18,short?89:108,size,size);
   ctx.restore();
 }
 function author(ctx,img,c,status) {
@@ -87,34 +91,56 @@ function author(ctx,img,c,status) {
 }
 function position(ctx,model,c,t,saving,short) {
   const name=saving?t.savings:model.symbol;
-  text(ctx,name,L-2,173,623,78,c.ink,680);
+  text(ctx,name,L-2,139,623,78,c.ink,680);
   const side=saving?t.rate:short?t.short:t.long;
   const detail=saving?model.annualRateText:(model.lotsText||model.leverageText);
   const tint=saving?c.gold:model.sideColor?'color-mix(in srgb,'+model.sideColor+' 67%, '+c.ink+')':short?c.loss:c.gain;
-  const sideW=text(ctx,side,L,284,300,40,tint,655);
+  const sideW=text(ctx,side,L,237,300,40,tint,655);
   if(detail){
-    const x=L+sideW+24;ctx.fillStyle=c.line;ctx.fillRect(x,291,2,31);
-    text(ctx,detail,x+22,284,340,40,c.ink,555);
+    const x=L+sideW+24;ctx.fillStyle=c.line;ctx.fillRect(x,244,2,31);
+    text(ctx,detail,x+22,237,340,40,c.ink,555);
   }
-  if(!saving && model.market)text(ctx,model.market,L,347,490,28,c.muted,490);
+  if(!saving && model.market)text(ctx,model.market,L,301,490,30,c.muted,490);
 }
 function result(ctx,model,c,t,saving) {
   const color=model.pnl>0?c.gain:model.pnl<0?c.loss:c.ink;
-  text(ctx,saving?t.interest:t.pnl,L,438,540,32,c.sub,520);
-  amount(ctx,model.pnlText,L-4,494,span+4,143,39,color,c.sub,670);
-  const percent=text(ctx,model.roiText,L,657,span*.45,50,color,645);
-  text(ctx,t.roi,L+percent+19,674,span-percent-22,27,c.muted,480);
+  text(ctx,saving?t.interest:t.pnl,L,361,540,34,c.sub,520);
+  amount(ctx,model.pnlText,L-4,414,span+4,132,41,color,c.sub,670);
+  const percent=text(ctx,model.roiText,L,559,span*.45,47,color,645);
+  text(ctx,t.roi,L+percent+19,571,span-percent-22,32,c.muted,480);
 }
-function metric(ctx,label,value,x,y,w,c,major) {
-  text(ctx,label,x,y,w,major?33:30,c.muted,490);
-  amount(ctx,value,x,y+(major?49:46),w,major?55:41,major?27:24,major?c.ink:c.detail,c.muted,major?625:540);
+function moneyParts(value) {
+  const raw=String(value||'—').trim();
+  const match=raw.match(/^(.*\d)\s+([^\s\d]+)$/u);
+  return match?{number:match[1],unit:match[2]}:{number:raw,unit:''};
 }
-function lineItem(ctx,label,value,y,c) {
-  if(!value)return;
-  const labelW=Math.min(span*.38,measureText(ctx,label,28,490)+3);
-  text(ctx,label,L,y,labelW,28,c.muted,490);
-  text(ctx,value,R,y-3,span-labelW-24,32,c.detail,535,'right');
+
+function metric(ctx,label,value,x,y,w,c,major=false) {
+  const {number,unit}=moneyParts(value);
+  text(ctx,unit?label+' · '+unit:label,x,y,w,35,c.muted,530);
+  text(ctx,number,x,y+50,w,major?57:49,major?c.ink:c.detail,major?620:570);
 }
+
+function stampCell(ctx,label,stamp,x,y,w,c,sharedZone) {
+  if(!stamp)return;
+  const title=stamp.zone && !sharedZone?label+' · '+stamp.zone:label;
+  text(ctx,title,x,y,w,35,c.muted,530);
+  text(ctx,stamp.date,x,y+46,w,42,c.detail,535);
+  if(stamp.clock || stamp.precision){
+    const line=[stamp.clock,stamp.precision].filter(Boolean).join(' · ');
+    text(ctx,line,x,y+94,w,stamp.clock?43:35,stamp.clock?c.ink:c.muted,stamp.clock?560:510);
+  }
+}
+
+function markLine(ctx,model,lang,x,y,w,c) {
+  const {number,unit}=moneyParts(model.markPriceText);
+  const sameUnit=moneyParts(model.priceText).unit===unit;
+  const price=sameUnit?number:model.markPriceText;
+  const label=pnlMark[lang],gap=17;
+  const labelWidth=text(ctx,label,x,y+3,w*.49,33,c.muted,530);
+  text(ctx,price,x+labelWidth+gap,y,w-labelWidth-gap,37,c.detail,560);
+}
+
 export async function renderTradeCard(model) {
   const lang=Object.hasOwn(copy,model.lang)?model.lang:'zh';
   const t=Object.fromEntries(keys.map((k,i)=>[k,copy[lang][i]]));
@@ -128,29 +154,33 @@ export async function renderTradeCard(model) {
   const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;
   const ctx=canvas.getContext('2d',{alpha:false});if(!ctx)throw Error('Canvas unavailable');
   ctx.fillStyle=c.page;ctx.fillRect(0,0,W,H);
-  heroArt(ctx,sculpture,c,short);author(ctx,avatar,c,saving?t.savingSim:t.sim);
+  const heroBottom=saving?718:636,footerTop=1190;
+  heroArt(ctx,sculpture,c,short,heroBottom);author(ctx,avatar,c,saving?t.savingSim:t.sim);
   position(ctx,model,c,t,saving,short);result(ctx,model,c,t,saving);
-  const footerTop=1190;
-  ctx.fillStyle=c.paper;ctx.fillRect(0,747,W,footerTop-747);
+  ctx.fillStyle=c.paper;ctx.fillRect(0,heroBottom,W,footerTop-heroBottom);
   const col=(span-56)/2,right=R-col;
-  const entry=short?(model.entryKind==='custom'?t.customSell:t.sell):(model.entryKind==='custom'?t.customBuy:t.buy);
-  metric(ctx,saving?t.capital:entry,saving?model.capitalText:model.entryPriceText,L,789,col,c,true);
-  metric(ctx,saving?t.balance:t.current,saving?model.balanceText:model.priceText,right,789,col,c,true);
-  rule(ctx,L,930,span,c.line);
-  if(saving){
-    lineItem(ctx,t.start,ticketTime(model.entryTimeText),991,c);
-    lineItem(ctx,t.end,ticketTime(savingsQuote(model,lang)),1092,c);
-  } else {
-    metric(ctx,model.lotsText?t.margin:t.capital,model.capitalText,L,960,col,c,false);
-    metric(ctx,t.notional,model.entryNotionalText,right,960,col,c,false);
-    const mark=model.markPriceText && model.markPriceText!==model.priceText;
-    lineItem(ctx,short?t.sellTime:t.buyTime,ticketTime(model.entryTimeText),mark?1066:1084,c);
-    if(mark)lineItem(ctx,model.markLabel||t.mark,model.markPriceText,1106,c);
-    lineItem(ctx,t.asOf,ticketTime(model.asOfText),mark?1146:1137,c);
+  const entryTitle=short?(model.entryKind==='custom'?t.customSell:t.sell):(model.entryKind==='custom'?t.customBuy:t.buy);
+  const hasMark=!saving && model.markPriceText && model.markPriceText!=='—' && model.markPriceText!==model.priceText;
+  const currentTitle=hasMark?lastTrade[lang]:t.current;
+  const firstRow=heroBottom+(saving?63:30);
+  metric(ctx,saving?t.capital:entryTitle,saving?model.capitalText:model.entryPriceText,L,firstRow,col,c,true);
+  metric(ctx,saving?t.balance:currentTitle,saving?model.balanceText:model.priceText,right,firstRow,col,c,true);
+  if(hasMark)markLine(ctx,model,lang,right,firstRow+119,col,c);
+  const opened=model.entryStamp||stampFromText(model.entryTimeText);
+  const quoted=model.quoteStamp||stampFromText(saving?savingsQuote(model,lang):model.asOfText);
+  const sharedZone=opened?.zone && opened.zone===quoted?.zone?opened.zone:'';
+  const timeRow=saving?965:hasMark?855:830;
+  stampCell(ctx,saving?t.start:short?t.sellTime:t.buyTime,opened,L,timeRow,col,c,sharedZone);
+  stampCell(ctx,saving?t.end:t.asOf,quoted,right,timeRow,col,c,sharedZone);
+  if(!saving){
+    rule(ctx,L,1020,span,c.line);
+    metric(ctx,model.lotsText?t.margin:t.capital,model.capitalText,L,1044,col,c);
+    metric(ctx,t.notional,model.entryNotionalText,right,1044,col,c);
   }
-  text(ctx,'@LiuShaYu2026',L,1225,span-177,37,c.ink,630);
+  text(ctx,'@LiuShaYu2026',L,1220,span-177,39,c.ink,630);
+  if(sharedZone)text(ctx,timeZoneLabels[lang]+' '+sharedZone,L,1282,span*.50,32,c.muted,500);
   if(qr){
-    text(ctx,scan[lang],L,1288,span-177,27,c.muted,500);
+    text(ctx,scan[lang],R-158,1265,sharedZone?span*.37:span*.46,30,c.muted,500,'right');
     // Preserve the QR's quiet zone and square module edges in the downloadable PNG.
     const size=135;
     ctx.imageSmoothingEnabled=false;

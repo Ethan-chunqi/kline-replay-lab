@@ -110,7 +110,7 @@ export function createShareDialog({capture,t}) {
       }
       localize(model.lang || document.documentElement.lang);
       setStatus(words.loading);
-      const renderer=style==='trade'?(await import('./share-trade-card.js?v=20261122-pnl-studio')).renderTradeCard:renderSharePoster;
+      const renderer=style==='trade'?(await import('./share-trade-card.js?v=20261122-pnl-readable')).renderTradeCard:renderSharePoster;
       if(!current(id))return;
       const canvas=await renderer(model);
       if(!current(id)) return;

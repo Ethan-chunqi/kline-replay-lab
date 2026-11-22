@@ -5,10 +5,10 @@ import {startFeed} from './feed.js?v=20261122-market-v3';
 import {createCycleTracker} from './cycle.js?v=20261122-share';
 import {createChartView,findLevelIndex} from './chart.js?v=20261122-minute-footer';
 import {movesForInterval} from './chart-moves.js?v=20261122-editorial';
-import {createShareDialog} from './share-dialog.js?v=20261122-pnl-studio';
+import {createShareDialog} from './share-dialog.js?v=20261122-pnl-readable';
 import {createRocketDialog} from './rocket-dialog.js?v=20261122-editorial';
 import {positionShareBars} from './share-bars.js?v=20261122-pinned-frames';
-import {createMoveVolumes,describeMoves,marketTime} from './move-context.js?v=20261122-share';
+import {createMoveVolumes,describeMoves,marketTime,marketStamp} from './move-context.js?v=20261122-pnl-readable';
 import {getCryptoBars,loadCryptoYear,shareCycleBars,currentCryptoDay} from './crypto-intervals.js?v=20261122-share';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
 import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-frozen-equity';
@@ -244,7 +244,12 @@ function captureShareModel(side,{chartOnly=false,signal}={}) {
     const moves=describeMoves({...info,records:captured},t,false);
     const entry=moves.find(m=>m.kind===position.entryKind);
     const low=moves.find(m=>m.kind==='low');
+    const savings=position.entryKind==='savings';
+    const entryPoint=entry||(Number.isFinite(position.entryAt)?{time:position.entryAt,precisionMs:1000}:null);
+    const entryZone=savings?'Asia/Shanghai':timezone;
+    const quotePoint={time:savings?model.asOf:source.asOf,precisionMs:1000};
     return {...model,moves,lowTimeText:low?.timeText||marketTime(info.levels?.low,language,timezone,t),
+      entryStamp:marketStamp(entryPoint,language,entryZone,t),quoteStamp:marketStamp(quotePoint,language,timezone,t),
       entryTimeText:entry?.timeText||(position.entryAt?marketTime({time:position.entryAt,precisionMs:1000},language,'Asia/Shanghai',t):'')};
   }).finally(()=>clearTimeout(timeout));
 
