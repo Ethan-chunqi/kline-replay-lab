@@ -1,5 +1,5 @@
 // A snapshot is drawn locally so the exported numbers and artwork match the selected trade.
-import {layoutShareChart} from './share-chart.js?v=20261122-poster-layout';
+import {layoutShareChart} from './share-chart.js?v=20261122-two-cards';
 import {drawText,wrapText,measureText,rule} from './share-poster-type.js?v=20261122-editorial';
 
 const width=1080,margin=58,inner=width-margin*2;

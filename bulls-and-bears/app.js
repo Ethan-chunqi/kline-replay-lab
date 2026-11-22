@@ -5,16 +5,16 @@ import {startFeed} from './feed.js?v=20261122-market-v3';
 import {createCycleTracker} from './cycle.js?v=20261122-share';
 import {createChartView,findLevelIndex} from './chart.js?v=20261122-minute-footer';
 import {movesForInterval} from './chart-moves.js?v=20261122-editorial';
-import {createShareDialog} from './share-dialog.js?v=20261122-poster-layout';
+import {createShareDialog} from './share-dialog.js?v=20261122-two-cards';
 import {createRocketDialog} from './rocket-dialog.js?v=20261122-editorial';
 import {positionShareBars} from './share-bars.js?v=20261122-trails';
 import {createMoveVolumes,describeMoves,marketTime} from './move-context.js?v=20261122-share';
 import {getCryptoBars,loadCryptoYear,shareCycleBars,currentCryptoDay} from './crypto-intervals.js?v=20261122-share';
 import {loadFutureYear} from './futures/year.js?v=20261122-market-v3';
 import {equityCatalog, startEquityFeed, loadEquityWindow, loadAiCaps} from './equities/feed.js?v=20261122-trails';
-import {createPositions} from './positions.js?v=20261122-poster-layout';
+import {createPositions} from './positions.js?v=20261122-two-cards';
 import {futureCatalog,startIndexFutureFeed,loadFutureWindow} from './futures/feed.js?v=20261122-trails';
-import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-editorial';
+import {t, languages, localeFor, dateTime, clockTime, ageText, applyI18n} from './i18n.js?v=20261122-two-cards';
 import {percent} from './metrics.js?v=20261122-market-v3';
 
 window.EQUITY_DATA_URL = 'https://raw.githubusercontent.com/Ethan-chunqi/kline-replay-lab/market-data/quotes/';
@@ -186,10 +186,13 @@ function renderMinuteRange(range) {
 }
 const chart=createChartView($('chart'),candle=>{hover=candle;ohlc();},{onMinuteRange:renderMinuteRange});
 const paperTrading=createPaperTrading($('paper-trading'),{t,localeFor,dateTime});
-const shareDialog=createShareDialog({getModel:makeShareModel});
-const rocketDialog=createRocketDialog({getModel:signal=>makeShareModel('long',{chartOnly:true,signal})});
+const shareDialog=createShareDialog({capture:captureShareModel,t});
+const rocketDialog=createRocketDialog({getModel:signal=>captureShareModel('long',{chartOnly:true,signal})?.report()});
 $('rocket-video').addEventListener('click',()=>rocketDialog.open());
-const positions=createPositions($('position-panel'),{t,onShare:side=>shareDialog.open(side)});
+const positions=createPositions($('position-panel'),{t,onShare:(side,style)=>{
+  const cardLabel=side==='savings'?'shareSavingsStyle':isCrypto()||isFuture()?'shareContractStyle':'sharePnlStyle';
+  shareDialog.open(side,style,cardLabel);
+}});
 let volumeRecords={}, currentMoves=[];
 const volumeTracker=createMoveVolumes(()=>{if(asset && data){renderLevels();drawChart();}});
 function describeSource() {
@@ -210,9 +213,9 @@ function renderMoves() {
   document.querySelectorAll('.move-volume-line').forEach(node=>{node.hidden=!isCrypto();});
 }
 
-async function makeShareModel(side,{chartOnly=false,signal}={}) {
+function captureShareModel(side,{chartOnly=false,signal}={}) {
   const position=chartOnly?{}:positions.snapshot(side);
-  if(!position || !levels?.low || !data?.price || !data?.asOf) return null;
+  if(!position || !data?.price || !data?.asOf) return null;
   // Freeze values before awaiting candles or volume. The market can switch while the PNG renders.
   const source={...data}, info={...describeSource(),records:{...volumeRecords}};
   const timezone=asset.timeZone, cryptoMarket=isCrypto(), selected=activeInterval();
@@ -222,13 +225,13 @@ async function makeShareModel(side,{chartOnly=false,signal}={}) {
   const title=cryptoMarket?asset.symbol:isFuture()?(data.contract||asset.symbol):assetName(asset)+' · '+asset.symbol;
   const color=chartOnly?'':getComputedStyle(document.querySelector('[data-share-side="'+side+'"]').closest('article')).getPropertyValue('--side-accent').trim();
   const barContext={...chartState(),symbol:asset.symbol};
-  const series=positionShareBars({side,source,asset,selected,levels:info.levels,
-    chartBars:chart.shareBars(),chartSourceId:barContext.sourceId,cryptoMarket,future:isFuture()});
+  const chartRequest={side,source,asset,selected,levels:info.levels,
+    chartBars:chart.shareBars(),chartSourceId:barContext.sourceId,cryptoMarket,future:isFuture()};
   const asOfText=marketTime({time:source.asOf,precisionMs:1000},lang,timezone,t);
   const model={...position,lang:language,theme:themeNow,side,symbol:title,market:[data.source,kind()].filter(Boolean).join(' · '),
     currentPrice:data.price,currentTime:source.asOf,chartAsOf:source.asOf,timeZone:timezone,
     asOfText,priceDigits:asset.digits||2,priceText:num(data.price)+' '+unit(),sideColor:color,
-    entryBasisText:marked,lowPriceText:num(levels.low.price)+' '+unit()};
+    entryBasisText:marked,lowPriceText:levels?.low?num(levels.low.price)+' '+unit():'—'};
   const captured=Object.fromEntries(Object.entries(info.records).map(([key,record])=>[key,{result:record.result}]));
   const waiting=Object.entries(info.records).filter(([,record])=>record.promise).map(([key,record])=>
     record.promise.then(()=>{
@@ -237,26 +240,32 @@ async function makeShareModel(side,{chartOnly=false,signal}={}) {
     }));
   let timeout;
   const ready=waiting.length?Promise.race([Promise.allSettled(waiting),new Promise(resolve=>{timeout=setTimeout(resolve,12000);})]):Promise.resolve();
-  const moves=ready.then(()=>describeMoves({...info,records:captured},t,false));
-  const [seriesData,shareMoves]=await Promise.all([series,moves]).finally(()=>clearTimeout(timeout));
-  signal?.throwIfAborted();
-  const {bars:chosen,frame,sourceId,breakAfter,barLevels}=seriesData;
-  if(!chosen.length)return null;
-  model.interval=t(language,labels[frame]);model.bars=chosen.map(b=>({...b}));model.breakAfter=breakAfter;
-  barContext.interval=frame;
-  barContext.sourceId=sourceId;
-  if(barLevels)barContext.levels=barLevels;
-  model.extremeTimes={};
-  for(const kind of ['high','low']){
-    const index=findLevelIndex(chosen,barContext,kind);
-    if(index>=0)model.extremeTimes[kind]=chosen[index].time;
+  const details=ready.then(()=>{
+    const moves=describeMoves({...info,records:captured},t,false);
+    const entry=moves.find(m=>m.kind===position.entryKind);
+    const low=moves.find(m=>m.kind==='low');
+    return {...model,moves,lowTimeText:low?.timeText||marketTime(info.levels?.low,language,timezone,t),
+      entryTimeText:entry?.timeText||(position.entryAt?marketTime({time:position.entryAt,precisionMs:1000},language,'Asia/Shanghai',t):'')};
+  }).finally(()=>clearTimeout(timeout));
+
+  // A P&L card can be exported even when the historical candle feed is unavailable.
+  async function illustrated() {
+    if(!info.levels?.low)return null;
+    const [base,series]=await Promise.all([details,positionShareBars(chartRequest)]);
+    signal?.throwIfAborted();
+    const {bars:chosen,frame,sourceId,breakAfter,barLevels}=series;
+    if(!chosen.length)return null;
+    const context={...barContext,interval:frame,sourceId,levels:barLevels||barContext.levels};
+    const extremeTimes={};
+    for(const kind of ['high','low']){
+      const index=findLevelIndex(chosen,context,kind);
+      if(index>=0)extremeTimes[kind]=chosen[index].time;
+    }
+    return {...base,interval:t(language,labels[frame]),bars:chosen.map(b=>({...b})),
+      breakAfter,extremeTimes,moves:movesForInterval(base.moves,frame)};
   }
-  model.moves=movesForInterval(shareMoves,frame);
-  const low=shareMoves.find(m=>m.kind==='low');
-  model.lowTimeText=low?.timeText||marketTime(info.levels.low,language,timezone,t);
-  const entry=shareMoves.find(m=>m.kind===position.entryKind);
-  model.entryTimeText=entry?.timeText||(position.entryAt?marketTime({time:position.entryAt,precisionMs:1000},language,'Asia/Shanghai',t):'');
-  return model;
+  let chartResult;
+  return {trade:()=>details,report:()=>chartResult??=illustrated()};
 }
 
 function drawPositions() {

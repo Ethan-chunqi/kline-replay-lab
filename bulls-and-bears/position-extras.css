@@ -153,12 +153,13 @@
   .bundle-total {display:grid}
 }
 
+.position-share-actions {display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
 .position-share {
   display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;gap:6px;
-  margin-top:12px;padding:7px 11px;min-height:32px;border-radius:5px;
+  max-width:100%;padding:7px 9px;min-height:38px;border-radius:5px;overflow-wrap:anywhere;
   border:1px solid var(--side-accent);background:var(--panel);color:var(--text);font-size:.8rem;font-weight:600
 }
-.position-share svg {width:15px;height:15px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.position-share svg {width:15px;height:15px;flex:none;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .position-share:hover,.position-share:focus-visible {color:var(--text);background:var(--selected)}
 .move-stats {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;border-top:1px solid var(--line);padding-block:10px 2px}
 .move-stats:has(.move-high[hidden]) {grid-template-columns:minmax(0,1fr)}

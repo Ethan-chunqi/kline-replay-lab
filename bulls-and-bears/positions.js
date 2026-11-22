@@ -54,7 +54,11 @@ function detailsToggle() {
 }
 
 function shareButton(side) {
-  return '<button type="button" class="position-share" data-share-side="'+side+'"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>'+label('shareCard')+'</button>';
+  const chartIcon='<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4v3m0 8v5m7-18v3m0 7v5m7-10v4m0 6v4"/><path d="M3 7h4v8H3zM10 5h4v7h-4zM17 11h4v6h-4z"/></svg>';
+  const cardIcon='<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="m6 15 4-4 3 2 4-5"/></svg>';
+  const cardName=side==='savings'?label('shareSavingsStyle'):'<span id="'+side+'-share-style"></span>';
+  return '<div class="position-share-actions" role="group"><button type="button" aria-haspopup="dialog" class="position-share" data-share-side="'+side+'">'+chartIcon+label('shareChartStyle')+'</button>'+
+    '<button type="button" aria-haspopup="dialog" class="position-share" data-pnl-side="'+side+'">'+cardIcon+cardName+'</button></div>';
 }
 
 function cycleDetails(short) {
@@ -151,8 +155,8 @@ export function createPositions(host,{t,onShare}) {
   const equivalents=Object.fromEntries(['short','long'].map(side=>[side,createEquivalent(host.querySelector('.result-'+side+' .value-equivalent'),t)]));
   const bank=createBankComparison(host.querySelector('.bank-comparison'),{t,num,detailsToggle,shareButton,readAmount:(text,lang)=>readPrincipal(text,lang,'CNY')});
   const shareValues={};
-  for(const button of host.querySelectorAll('[data-share-side]')){
-    button.addEventListener('click',()=>onShare(button.dataset.shareSide));
+  for(const button of host.querySelectorAll('[data-share-side],[data-pnl-side]')){
+    button.addEventListener('click',()=>onShare(button.dataset.shareSide||button.dataset.pnlSide,button.dataset.pnlSide?'trade':'report'));
   }
   const elements = new Map([...host.querySelectorAll('[id]')].map(el => [el.id,el]));
   const el = id => elements.get(id);
@@ -249,6 +253,7 @@ export function createPositions(host,{t,onShare}) {
     if (language !== lang) {
       language = lang;
       for (const item of textItems) item.textContent = tr(item.dataset.posText);
+      for(const group of host.querySelectorAll('.position-share-actions'))group.setAttribute('aria-label',tr('shareCard'));
     }
     for (const child of host.querySelectorAll('[data-unit]')) child.textContent = {currency,price:priceUnit,percent:'%',lots:tr('手'),capital:capitalUnit(state)}[child.dataset.unit];
     el('capital-row').hidden = future;
@@ -296,6 +301,7 @@ export function createPositions(host,{t,onShare}) {
       (!state.levels.status || state.levels.status === 'ready') &&
       (!future || (contract && (!state.levels.contract || state.levels.contract === contract)));
     for (const side of ['short','long']) {
+      write(side+'-share-style',tr(crypto||future?'shareContractStyle':'sharePnlStyle'));
       const dir = side === 'long' ? 1 : -1;
       const entry = custom ? entryValue : cert ? state.levels[dir > 0 ? 'low' : 'high']?.price : null;
       const contractResult = future ? calculateFuturesPosition({lots,multiplier:contract ? state.multiplier : null,tick:state.tick,

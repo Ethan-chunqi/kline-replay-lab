@@ -39,59 +39,114 @@ function candles(input) {
   return [...rows.values()].sort((a,b)=>a.time-b.time);
 }
 
-function dateLabels(first,last,locale,zone,daily) {
-  const year=new Intl.DateTimeFormat('en',{year:'numeric',timeZone:zone});
-  const dates=new Intl.DateTimeFormat(locale,{
-    timeZone:zone,year:year.format(first)!==year.format(last)?'numeric':undefined,month:'2-digit',day:'2-digit',
-    ...(daily?{}:{hour:'2-digit',minute:'2-digit',hourCycle:'h23'}),
-  });
-  return [dates.format(first),dates.format(last)];
+const plotTop=78,plotBottom=423,volumeTop=439,volumeBottom=481,dateTop=496;
+
+// Each displayed bar remains an individual source candle. Keep both cycle extrema and
+// the latest market together, with an explicit break wherever the period is omitted.
+function chartWindows(bars,model,moves) {
+  const last=bars.length-1;
+  const sourceCut=Number.isFinite(model.breakAfter)?bars.findIndex(b=>b.time===model.breakAfter):-1;
+  let ranges=[[0,last]];
+  if(model.side==='short' && bars.length>84) {
+    ranges=[[last-33,last]];
+    for(const move of moves) {
+      let i=bars.findIndex(b=>b.time===model.extremeTimes?.[move.kind]);
+      if(i<0 && move.time>=bars[0].time && move.time<bars[last].time+86400000){
+        const next=bars.findIndex(b=>b.time>move.time);
+        i=next<0?last:next-1;
+      }
+      if(i>=0){
+        const first=Math.max(0,Math.min(last-21,i-8));
+        ranges.push([first,first+21]);
+      }
+    }
+    if(ranges.length===1 || moves.some(m=>m.time<bars[0].time))ranges.push([0,17]);
+  }
+  ranges.sort((a,b)=>a[0]-b[0]);
+  const merged=[];
+  for(const [from,to] of ranges){
+    const previous=merged.at(-1);
+    if(previous && from<=previous[1]+3)previous[1]=Math.max(previous[1],to);
+    else merged.push([from,to]);
+  }
+  const windows=[];
+  for(const [from,to] of merged){
+    if(sourceCut>=from && sourceCut<to){
+      windows.push(bars.slice(from,sourceCut+1),bars.slice(sourceCut+1,to+1));
+    }else windows.push(bars.slice(from,to+1));
+  }
+  return windows;
 }
 
-function plot(ctx,model,bars,moves,{width,locale,zone,colors,theme,breakIndex,earlyTimes}) {
+function priceTicks(low,high,digits) {
+  if(low===high)return [high];
+  const target=(high-low)/3,step=10**Math.floor(Math.log10(target));
+  const scale=[1,2,2.5,5,10].find(k=>k*step>=target)??10;
+  const jump=Math.max(10**-digits,step*scale),first=Math.ceil(low/jump-1e-9)*jump;
+  const ticks=[];
+  for(let i=0;i<6;i++){
+    const value=first+i*jump;
+    if(value>high+jump*1e-8)break;
+    ticks.push(Number(value.toFixed(digits)));
+  }
+  return ticks.length>=2?ticks:[low,high];
+}
+
+function plot(ctx,model,windows,moves,{width,locale,zone,colors,theme,earlyTimes}) {
+  const bars=windows.flat(),last=bars.at(-1);
   const currentTime=epoch(model.currentTime??model.chartAsOf);
   const high=Math.max(...bars.map(b=>b.high),...moves.map(m=>m.price),moves.length?model.currentPrice:-Infinity);
   const low=Math.min(...bars.map(b=>b.low),...moves.map(m=>m.price),moves.length?model.currentPrice:Infinity);
-  const padding=Math.max((high-low)*.06,Math.abs(high)*1e-7,1e-12);
-  const ceiling=high+padding,floor=low-padding;
-  const priceY=value=>54+(ceiling-value)/(ceiling-floor)*190;
+  const pad=Math.max((high-low)*.078,Math.abs(high)*.000015,1e-12),ceiling=high+pad,floor=low-pad;
+  const priceY=value=>plotTop+(ceiling-value)/(ceiling-floor)*(plotBottom-plotTop);
   const digits=Math.max(0,Math.min(10,Number.isInteger(model.priceDigits)?model.priceDigits:2));
-  const numbers=new Intl.NumberFormat(locale,{maximumFractionDigits:digits});
-  const ticks=high===low?[high]:[high,(high+low)/2,low];
-  const axis=Math.min(200,Math.max(68,...ticks.map(v=>measureText(ctx,numbers.format(v),25)+18)));
-  const right=width-axis-8;
-  const start=earlyTimes.length?earlyTimes.length*28+20:0;
-  const gap=breakIndex>0?28:0;
-  const slot=(right-start-gap)/(bars.length+1);
-  const body=Math.min(17,slot*.72);
-  const center=i=>start+(i+.5)*slot+(breakIndex>0 && i>=breakIndex?gap:0);
-  const last=bars.at(-1);
-  const volBase=281;
-  for(const value of ticks) {
-    const py=priceY(value);
-    ctx.save();
-    ctx.strokeStyle=colors.rule;ctx.lineWidth=1.3;ctx.setLineDash([3,5]);
-    ctx.beginPath();ctx.moveTo(0,py);ctx.lineTo(right,py);ctx.stroke();ctx.restore();
-    drawText(ctx,numbers.format(value),width,py-14,axis,25,colors.muted,{align:'right'});
+  const number=new Intl.NumberFormat(locale,{maximumFractionDigits:digits});
+  const ticks=priceTicks(low,high,digits);
+  const axis=Math.min(width*.22,Math.max(65,...ticks.map(v=>measureText(ctx,number.format(v),25,480))))+20;
+  const right=width-axis-9,start=earlyTimes.length?earlyTimes.length*22+24:6;
+  const seam=windows.length>1?34:0;
+  const slot=(right-start-seam*(windows.length-1))/(bars.length+1.15);
+  const body=Math.min(20,slot*.70);
+  const positions=[],panes=[];
+  let left=start;
+  for(const part of windows) {
+    const edge=left+part.length*slot;
+    panes.push({left,right:edge,part});
+    for(let i=0;i<part.length;i++)positions.push(left+(i+.5)*slot);
+    left=edge+seam;
   }
-
+  const positive=model.chartUpColor||colors.up,negative=model.chartDownColor||colors.down;
+  const ink=theme==='light'?'#314d46':'#bad0ca';
+  const shade=ctx.createLinearGradient(0,plotTop,0,volumeBottom);
+  shade.addColorStop(0,theme==='light'?'rgba(51,93,78,.028)':'rgba(85,151,135,.060)');
+  shade.addColorStop(1,theme==='light'?'rgba(51,93,78,0)':'rgba(85,151,135,0)');
+  ctx.fillStyle=shade;ctx.fillRect(0,plotTop,right,volumeBottom-plotTop);
+  // Each grid rule stops at the break. The empty gutter is visible above price and volume.
+  ctx.save();ctx.strokeStyle=colors.rule;ctx.lineWidth=1.3;ctx.globalAlpha=.72;
+  for(const tick of ticks){
+    const y=priceY(tick);
+    ctx.beginPath();
+    panes.forEach((p,i)=>{ctx.moveTo(i===0?0:p.left-2,y);ctx.lineTo(i===panes.length-1?right:p.right+2,y);});
+    ctx.stroke();
+  }
+  ctx.restore();
+  for(const tick of ticks)drawText(ctx,number.format(tick),width,priceY(tick)-15,axis-9,25,colors.muted,{align:'right',weight:480});
+  ctx.save();ctx.globalAlpha=.72;rule(ctx,0,volumeBottom+2,right,colors.rule);ctx.restore();
   const peakVolume=Math.max(0,...bars.map(b=>Number.isFinite(b.volume)?b.volume:0));
   const marked={},gold='#ffdf36';
   function candle(bar,index,highlight) {
-    const cx=center(index);
-    const color=highlight?gold:bar.close>=bar.open?(model.chartUpColor||colors.up):(model.chartDownColor||colors.down);
-    ctx.save();
-    if(highlight){ctx.shadowColor='#ffd72a';ctx.shadowBlur=7;}
-    ctx.strokeStyle=highlight?(theme==='light'?'#936600':'#fff0aa'):color;
-    ctx.lineWidth=highlight?2.5:Math.min(1.9,slot*.42);
-    ctx.beginPath();ctx.moveTo(cx,priceY(bar.high));ctx.lineTo(cx,priceY(bar.low));ctx.stroke();
+    const x=positions[index],color=highlight?gold:bar.close>=bar.open?positive:negative;
     const top=Math.min(priceY(bar.open),priceY(bar.close));
-    const height=Math.max(Math.min(2,body),Math.abs(priceY(bar.close)-priceY(bar.open)));
-    ctx.fillStyle=color;ctx.fillRect(cx-body/2,top,body,height);
-    if(highlight){ctx.lineWidth=1;ctx.strokeRect(cx-body/2,top,body,height);}
+    const height=Math.max(2.1,Math.abs(priceY(bar.close)-priceY(bar.open)));
+    ctx.save();ctx.strokeStyle=highlight?(theme==='light'?'#a07605':'#ffed86'):color;
+    ctx.lineWidth=highlight?2.6:Math.max(1.35,Math.min(2,slot*.20));
+    ctx.beginPath();ctx.moveTo(x,priceY(bar.high));ctx.lineTo(x,priceY(bar.low));ctx.stroke();
+    if(highlight){ctx.shadowColor='#ffdc43';ctx.shadowBlur=5;}
+    ctx.fillStyle=color;ctx.fillRect(x-body/2,top,body,height);
+    if(highlight){ctx.shadowBlur=0;ctx.lineWidth=1.4;ctx.strokeRect(x-body/2,top,body,height);}
     ctx.restore();
   }
-  for(const [i,b] of bars.entries()) {
+  for(const [i,b] of bars.entries()){
     const extremes=['low','high'].filter(kind=>{
       if(model.extremeTimes?.[kind]!==b.time)return false;
       const move=moves.find(m=>m.kind===kind);
@@ -99,55 +154,87 @@ function plot(ctx,model,bars,moves,{width,locale,zone,colors,theme,breakIndex,ea
     });
     for(const kind of extremes)marked[kind]=i;
     if(!extremes.length)candle(b,i,false);
-    if(peakVolume>0 && b.volume>0) {
-      const h=23*b.volume/peakVolume;
-      ctx.save();ctx.globalAlpha=.45;
-      ctx.fillStyle=extremes.length?gold:b.close>=b.open?(model.chartUpColor||colors.up):(model.chartDownColor||colors.down);
-      ctx.fillRect(center(i)-body/2,volBase-h,body,h);ctx.restore();
+    if(peakVolume>0 && b.volume>0){
+      const h=(volumeBottom-volumeTop)*b.volume/peakVolume;
+      ctx.save();ctx.globalAlpha=extremes.length?.75:.50;
+      ctx.fillStyle=extremes.length?gold:b.close>=b.open?positive:negative;
+      ctx.fillRect(positions[i]-body/2,volumeBottom-h,body,h);ctx.restore();
     }
   }
-  // Linear interpolation between real candle openings retains a separate axis
-  // slot for an earlier off-chart extreme and honours the explicit folded gap.
-  function xAt(time) {
-    if(time<bars[0].time)return 7+28*earlyTimes.indexOf(time);
+  function xAt(time){
+    if(time<bars[0].time)return 6+22*earlyTimes.indexOf(time);
     if(time>=last.time) {
-      const x=center(bars.length-1);
-      return currentTime>last.time?x+(right-x-2)*Math.min(1,(time-last.time)/(currentTime-last.time)):x;
+      const x=positions.at(-1);
+      return currentTime>last.time?x+(right-x-3)*Math.min(1,(time-last.time)/(currentTime-last.time)):x;
     }
     const next=bars.findIndex(b=>b.time>=time);
-    if(next===0 || time===bars[next].time)return center(next);
-    const fraction=(time-bars[next-1].time)/(bars[next].time-bars[next-1].time);
-    return center(next-1)+(center(next)-center(next-1))*fraction;
+    if(next===0 || bars[next].time===time)return positions[next];
+    return positions[next-1]+(positions[next]-positions[next-1])*(time-bars[next-1].time)/(bars[next].time-bars[next-1].time);
   }
-  for(const m of moves) {
-    const origin=marked[m.kind]===undefined?xAt(m.time):center(marked[m.kind]);
+  // Clip the guide through each plotted window, including its end points.
+  // Never carry the stroke across the unplotted time gutter.
+  for(const m of moves){
+    const origin=marked[m.kind]===undefined?xAt(m.time):positions[marked[m.kind]];
     const segment=[origin,priceY(m.price),xAt(currentTime),priceY(model.currentPrice)];
-    ctx.save();ctx.beginPath();ctx.rect(-5,44,right+12,218);ctx.clip();
-    drawMoveTrail(ctx,{segment,kind:m.kind,theme,scale:1.65,phase:null});
-    if(marked[m.kind]===undefined) {
-      ctx.fillStyle=moveTrailColor(m.kind,theme);
-      ctx.beginPath();ctx.arc(segment[0],segment[1],3.8,0,2*Math.PI);ctx.fill();
+    const targetX=segment[2],span=targetX-origin;
+    let phase=null;
+    if(panes.length>1 && span>85){
+      // Select a visible section for the rocket or satellite. Its centre must
+      // stay away from a folded date gutter even as the endpoint updates.
+      const preferred=m.kind==='high'?.36:.68,wanted=origin+span*preferred;
+      const fits=panes.map(p=>[Math.max(origin+34,p.left+22),Math.min(targetX-31,p.right-22)])
+        .filter(([l,r])=>l<=r)
+        .map(([l,r])=>Math.max(l,Math.min(r,wanted)));
+      if(fits.length){
+        const best=fits.reduce((a,b)=>Math.abs(a-wanted)<=Math.abs(b-wanted)?a:b);
+        const factor=span/Math.hypot(span,segment[3]-segment[1]),scale=1.40;
+        const inset=34*scale*factor,room=span-49*scale*factor;
+        if(room>0)phase=Math.min(.92,Math.max(.08,(best-origin-inset)/room));
+      }
+    }
+    ctx.save();ctx.beginPath();
+    panes.forEach((p,i)=>{
+      const l=i?p.left-4:-5,r=i===panes.length-1?right+6:p.right+4;
+      ctx.rect(l,plotTop-8,r-l,plotBottom-plotTop+16);
+    });
+    ctx.clip();ctx.globalAlpha=.88;
+    drawMoveTrail(ctx,{segment,kind:m.kind,theme,scale:1.40,phase});
+    if(marked[m.kind]===undefined){
+      ctx.fillStyle=moveTrailColor(m.kind,theme);ctx.beginPath();ctx.arc(origin,segment[1],3.6,0,Math.PI*2);ctx.fill();
     }
     ctx.restore();
   }
-  // Redraw the gold wicks over a trajectory meeting them at the same price.
   for(const i of new Set(Object.values(marked)))candle(bars[i],i,true);
-  if(moves.length) {
+  if(moves.length){
     ctx.fillStyle=colors.ink;ctx.strokeStyle=colors.page;ctx.lineWidth=2;
-    ctx.beginPath();ctx.arc(xAt(currentTime),priceY(model.currentPrice),5.1,0,2*Math.PI);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.arc(xAt(currentTime),priceY(model.currentPrice),4.7,0,2*Math.PI);ctx.fill();ctx.stroke();
   }
-  const breaks=[];
-  if(start)breaks.push(start-10);
-  if(gap)breaks.push((center(breakIndex-1)+center(breakIndex))/2);
-  for(const x of breaks) {
-    ctx.strokeStyle=colors.soft;ctx.lineWidth=2;ctx.beginPath();
-    for(const d of [-4,2]) {ctx.moveTo(x+d-3,volBase);ctx.lineTo(x+d+3,volBase-13);}
-    ctx.stroke();
+  const breaks=panes.slice(1).map(p=>p.left-seam/2);
+  if(earlyTimes.length)breaks.unshift(start-10);
+  ctx.save();ctx.lineWidth=2.6;ctx.strokeStyle=ink;
+  for(const x of breaks){
+    for(const y of [volumeBottom+4,plotTop+9]){
+      ctx.beginPath();
+      for(const d of [-4,4]){ctx.moveTo(x+d-3,y);ctx.lineTo(x+d+3,y-10);}
+      ctx.stroke();
+    }
   }
-  const daily=model.side==='short' || last.time-bars[0].time>(bars.length-1)*12*3600000 && !gap && bars.length>1;
-  const [firstDay,lastDay]=dateLabels(bars[0].time,last.time,locale,zone,daily);
-  drawText(ctx,firstDay,start,293,right*.46,25,colors.muted);
-  if(bars.length>1)drawText(ctx,lastDay,right,293,right*.46,25,colors.muted,{align:'right'});
+  ctx.restore();
+  const daily=model.side==='short' || bars.length>1 && windows.length===1 && last.time-bars[0].time>(bars.length-1)*12*3600000;
+  const crossYear=new Intl.DateTimeFormat('en',{year:'numeric',timeZone:zone});
+  const showYear=crossYear.format(bars[0].time)!==crossYear.format(last.time);
+  const date=new Intl.DateTimeFormat(locale,{timeZone:zone,year:showYear?'numeric':undefined,month:'2-digit',day:'2-digit',...(daily?{}:{hour:'2-digit',minute:'2-digit',hourCycle:'h23'})});
+  if(panes.length===1){
+    drawText(ctx,date.format(bars[0].time),start,dateTop,right*.47,25,colors.muted);
+    if(bars.length>1)drawText(ctx,date.format(last.time),right,dateTop,right*.47,25,colors.muted,{align:'right'});
+  }else{
+    panes.forEach(p=>{
+      const x=(p.left+p.right)/2,w=p.right-p.left+14;
+      const dates=[date.format(p.part[0].time),date.format(p.part.at(-1).time)];
+      drawText(ctx,dates[0],x,dateTop,w,24,colors.muted,{align:'center'});
+      if(p.part.length>1)drawText(ctx,'→ '+dates[1],x,dateTop+31,w,24,colors.muted,{align:'center'});
+    });
+  }
 }
 
 export function layoutShareChart(ctx,model,{x=0,y=0,width,lang,locale,zone,colors}) {
@@ -160,11 +247,13 @@ export function layoutShareChart(ctx,model,{x=0,y=0,width,lang,locale,zone,color
       .map(m=>({...m,time:epoch(m.time)})).sort((a,b)=>a.kind===b.kind?0:a.kind==='low'?-1:1)
     :[];
   const earlyTimes=[...new Set(moves.map(m=>m.time).filter(time=>time<bars[0].time))].sort((a,b)=>a-b);
-  const breakIndex=Number.isFinite(model.breakAfter)?bars.findIndex(b=>b.time===model.breakAfter)+1:0;
+  const windows=chartWindows(bars,model,moves);
+  const folded=windows.length>1;
   const theme=model.theme==='light'?'light':'dark';
-  const gapNote=[earlyTimes.length?copy[5]:'',breakIndex?copy[6]:''].filter(Boolean).join(' · ');
+  const gapNote=[earlyTimes.length?copy[5]:'',folded?copy[6]:''].filter(Boolean).join(' · ');
   const gapLines=gapNote?wrapText(ctx,'//   '+gapNote,width,22):[];
-  const statTop=347+gapLines.length*28;
+  const notesTop=dateTop+(folded?74:45);
+  const statTop=notesTop+gapLines.length*30+14;
   const headings=statWords[lang]||statWords.en;
   const columns={label:0,change:0,volume:0};
   const rows=moves.map(move=>({
@@ -242,8 +331,8 @@ export function layoutShareChart(ctx,model,{x=0,y=0,width,lang,locale,zone,color
     context.save();context.translate(x,y);context.textBaseline='top';
     drawText(context,[model.interval,copy[0]].filter(Boolean).join(' · '),0,0,width*.48,38,colors.ink,{weight:680});
     if(model.priceText)drawText(context,copy[1]+'  '+model.priceText,width,6,width*.51,27,colors.soft,{weight:560,align:'right'});
-    plot(context,model,bars,moves,{width,locale,zone,colors,theme,breakIndex,earlyTimes});
-    gapLines.forEach((value,i)=>drawText(context,value,0,325+i*28,width,22,colors.muted));
+    plot(context,model,windows,moves,{width,locale,zone,colors,theme,earlyTimes});
+    gapLines.forEach((value,i)=>drawText(context,value,0,notesTop+i*30,width,23,colors.muted));
     paint.forEach(drawLine=>drawLine(context));
     context.restore();
   }
