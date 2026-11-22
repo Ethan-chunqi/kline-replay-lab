@@ -1,5 +1,5 @@
 // A snapshot is drawn locally so the exported numbers and artwork match the selected trade.
-import {layoutShareChart} from './share-chart.js?v=20261122-editorial';
+import {layoutShareChart} from './share-chart.js?v=20261122-poster-layout';
 import {drawText,wrapText,measureText,rule} from './share-poster-type.js?v=20261122-editorial';
 
 const width=1080,margin=58,inner=width-margin*2;
@@ -70,52 +70,58 @@ function hero(ctx,model,words,avatar,shark,saving,short,height) {
   drawText(ctx,model.pnlText,margin+labelW+19,427,inner-labelW-24,40,white,{weight:615});
   ctx.restore();
 }
+const priceBandHeight=178;
 function pricePair(ctx,model,words,c,short,top) {
   const isCustom=model.entryKind==='custom';
   const title=short?(isCustom?words.customSell:words.sell):(isCustom?words.customBuy:words.buy);
-  ctx.fillStyle=c.panel;ctx.fillRect(0,top,width,132);
-  const col=(inner-98)/2,x2=width-margin-col;
-  drawText(ctx,title,margin,top+22,col,24,c.muted,{weight:520});
-  drawText(ctx,model.entryPriceText,margin,top+57,col,39,c.ink,{weight:650});
-  drawText(ctx,words.current,x2,top+22,col,24,c.muted,{weight:520});
-  drawText(ctx,model.priceText,x2,top+57,col,39,c.ink,{weight:650});
-  ctx.save();ctx.translate(width/2-21,top+73);ctx.strokeStyle=c.muted;ctx.lineWidth=2.3;ctx.beginPath();
+  ctx.fillStyle=c.panel;ctx.fillRect(0,top,width,priceBandHeight);
+  const col=(inner-90)/2;
+  for(const [x,label,price] of [[margin,title,model.entryPriceText],[width-margin-col,words.current,model.priceText]]) {
+    drawText(ctx,label,x,top+34,col,32,c.muted,{weight:480});
+    const parts=String(price).match(/^(.*) ([^\s]+)$/u);
+    const amount=parts?parts[1]:price,unit=parts?parts[2]:'';
+    const unitWidth=unit?measureText(ctx,unit,29,510)+13:0;
+    const fontSize=Math.min(54,54*(col-unitWidth)/Math.max(1,measureText(ctx,amount,54,625)));
+    const numberWidth=drawText(ctx,amount,x,top+91+(54-fontSize),col-unitWidth,fontSize,c.ink,{weight:625});
+    if(unit)drawText(ctx,unit,x+numberWidth+13,top+113,unitWidth,29,c.muted,{weight:510});
+  }
+  ctx.save();ctx.translate(width/2-20,top+115);ctx.strokeStyle=c.muted;ctx.lineWidth=2.1;ctx.beginPath();
   ctx.moveTo(0,0);ctx.lineTo(37,0);ctx.moveTo(29,-8);ctx.lineTo(37,0);ctx.lineTo(29,8);ctx.stroke();ctx.restore();
 }
 function recordFields(model,t,saving,short) {
-  if(saving)return [[[t.capital,model.capitalText],[t.start,model.entryTimeText]],[[t.low,model.lowPriceText],[t.lowTime,model.lowTimeText]]];
-  const rows=[[[model.lotsText?t.margin:t.capital,model.capitalText],[t.notional,model.entryNotionalText]]];
-  const execution=[];
-  if(model.entryTimeText)execution.push([short?t.sellTime:t.buyTime,model.entryTimeText]);
-  if(model.markPriceText && model.markPriceText!==model.priceText) execution.push([model.markLabel,model.markPriceText]);
-  if(execution.length)rows.push(execution);
+  if(saving)return [[t.capital,model.capitalText],[t.start,model.entryTimeText],[t.low,model.lowPriceText],[t.lowTime,model.lowTimeText]];
+  const rows=[[model.lotsText?t.margin:t.capital,model.capitalText],[t.notional,model.entryNotionalText]];
+  if(model.entryTimeText)rows.push([short?t.sellTime:t.buyTime,model.entryTimeText]);
+  if(model.markPriceText && model.markPriceText!==model.priceText)rows.push([model.markLabel,model.markPriceText]);
   if(short || model.entryKind==='custom'){
-    const distinct=[];
-    if(model.entryPriceText!==model.lowPriceText)distinct.push([t.low,model.lowPriceText]);
-    if(model.entryTimeText!==model.lowTimeText)distinct.push([t.lowTime,model.lowTimeText]);
-    if(distinct.length)rows.push(distinct);
+    if(model.entryPriceText!==model.lowPriceText)rows.push([t.low,model.lowPriceText]);
+    if(model.entryTimeText!==model.lowTimeText)rows.push([t.lowTime,model.lowTimeText]);
   }
   return rows;
 }
-function measureRecords(ctx,rows) {
-  const gap=48,col=(inner-gap)/2;
-  return rows.map(row=>{
-    const cells=row.map(([label,value],i)=>({label,rows:wrapText(ctx,value,col,31,555),x:margin+i*(col+gap),width:col}));
-    return {cells,height:63+Math.max(...cells.map(cell=>cell.rows.length))*38};
+function layoutRecords(ctx,fields) {
+  const rows=fields.map(([label,value])=>{
+    const labelWidth=measureText(ctx,label,31,465);
+    const valueWidth=measureText(ctx,value,37,555);
+    const stacked=labelWidth+36+valueWidth>inner;
+    const lines=stacked?wrapText(ctx,value,inner,37,555):[value];
+    return {label,lines,stacked,height:stacked?70+lines.length*50:83};
   });
+  return {rows,height:107+rows.reduce((sum,row)=>sum+row.height,0)+42};
 }
-function drawRecords(ctx,layout,title,c,y) {
-  rule(ctx,margin,y,inner,c.rule);
-  drawText(ctx,title,margin,y+25,inner,31,c.ink,{weight:680});
-  y+=84;
-  for(const row of layout){
-    for(const cell of row.cells){
-      drawText(ctx,cell.label,cell.x,y,cell.width,23,c.muted);
-      cell.rows.forEach((line,i)=>drawText(ctx,line,cell.x,y+34+i*38,cell.width,31,c.ink,{weight:555}));
-    }
+function drawRecords(ctx,layout,title,c,top) {
+  rule(ctx,margin,top,inner,c.rule);
+  drawText(ctx,title,margin,top+35,inner,40,c.ink,{weight:630});
+  let y=top+107;
+  for(const [i,row] of layout.rows.entries()) {
+    if(i)rule(ctx,margin,y,inner,c.rule);
+    drawText(ctx,row.label,margin,y+24,inner,31,c.muted,{weight:465});
+    row.lines.forEach((line,n)=>{
+      const x=row.stacked?margin:width-margin;
+      drawText(ctx,line,x,row.stacked?y+67+n*50:y+20,inner,37,c.ink,{weight:555,align:row.stacked?'left':'right'});
+    });
     y+=row.height;
   }
-  return y;
 }
 function measureServices(ctx,items,single) {
   const textWidth=single?inner-245:inner-152;
@@ -164,13 +170,13 @@ export async function renderSharePoster(model) {
   const ctx=canvas.getContext('2d',{alpha:false});
   if(!ctx)throw Error('Canvas unavailable');
   const c=palettes[model.theme]||palettes.dark,heroHeight=495;
-  const chartTop=heroHeight+(saving?0:132)+41;
+  const chartTop=heroHeight+(saving?0:priceBandHeight)+52;
   const chart=layoutShareChart(ctx,saving?model:{...model,priceText:''},{
     x:margin,y:chartTop,width:inner,lang,locale:langs[lang],zone:model.timeZone||'Asia/Shanghai',colors:c});
-  const records=measureRecords(ctx,recordFields(model,t,saving,short));
+  const records=layoutRecords(ctx,recordFields(model,t,saving,short));
   const services=measureServices(ctx,list,single);
-  const recordTop=chartTop+chart.height+30;
-  const serviceTop=recordTop+84+records.reduce((h,r)=>h+r.height,0);
+  const recordTop=chartTop+chart.height+43;
+  const serviceTop=recordTop+records.height;
   const footer=serviceTop+(list.length?96+services.reduce((h,r)=>h+r.height,0):0);
   canvas.height=Math.ceil(footer+190);
   ctx.fillStyle=c.page;ctx.fillRect(0,0,width,canvas.height);

@@ -1,7 +1,7 @@
 import {perpetualSources,bitgetPath,venueNames} from './perpetuals.js?v=20261122-market-v3';
 import {quotePerDollar,fxAsOf} from './equivalents/rates.js?v=20261122-market-v3';
 import { createEquivalent } from './equivalents/view.js?v=20261122-editorial-2';
-import { createBankComparison } from './bank.js?v=20261122-editorial-2';
+import { createBankComparison } from './bank.js?v=20261122-poster-layout';
 import { parseAmount, readPrincipal } from './metrics.js?v=20261122-market-v3';
 
 const storageKey = 'market-positions-v1';

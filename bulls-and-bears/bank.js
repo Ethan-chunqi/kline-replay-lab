@@ -47,6 +47,7 @@ export function createBankComparison(host,{t,num,readAmount,detailsToggle,shareB
     equivalent.update(value?.interest,currency,lang,'savings');
     if(amount.textContent!==balance) amount.textContent=balance;
     shareValue=value ? {pnl:value.interest,pnlText:earned+' '+currency,roiText:num(lang,value.interest/p*100,2)+'%',
+      balanceText:balance,annualRateText:num(lang,annualRate*100,0,2)+'%',
       asOf,capitalText:funding.textContent,leverageText:'1×',entryNotionalText:funding.textContent,entryKind:'savings',entryBasisText:t(lang,'shareSavingsStart'),
       entryPriceText:'—',entryAt:startMs}:null;
     if(accrued.textContent!==earned) accrued.textContent=earned;
