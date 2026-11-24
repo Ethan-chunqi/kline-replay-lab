@@ -12,18 +12,18 @@
         }
       } catch {}
     </script>
-    <title>浪线 WaveLab · 实时模拟交易与历史训练</title>
+    <title>训练的大鲨鱼 · 实时交易与历史训练</title>
     <meta name="description" content="查看比特币、股指期货与全球指数行情，使用模拟账户进行实时交易或历史 K 线回放训练。" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=20261124trend3" />
+    <link rel="stylesheet" href="./style.css?v=20261124range2" />
     <link rel="stylesheet" href="./journal.css?v=20261124" />
     <link rel="stylesheet" href="./trade-history.css?v=20261124trend3" />
   </head>
   <body data-workspace="replay">
     <header class="mast">
       <div class="mast-inner">
-        <a class="brand" href="#terminal" aria-label="WaveLab 交易终端"
-          ><img src="./favicon.svg" alt="" /><span>Wave<span class="brand-light">Lab</span></span></a
+        <a class="brand" href="#terminal" aria-label="训练的大鲨鱼交易终端"
+          ><img src="./favicon.svg" alt="" /><span>训练的大鲨鱼</span></a
         >
         <nav aria-label="主导航">
           <div class="workspace-switch" role="group" aria-label="选择交易模式">
@@ -163,6 +163,9 @@
             </div>
           </div>
           <div id="practiceRange" class="practice-range" hidden></div>
+          <div id="liveHistoryRange" class="practice-range live-history-range" hidden>
+            <span id="liveHistoryDates"></span><button type="button" class="text-button" data-action="showHistoryWindow">查看全段</button>
+          </div>
         </section>
         <aside class="panel ticket">
           <div class="panel-heading">
@@ -264,7 +267,7 @@
     <main id="journal" hidden></main>
     <footer>
       <span><i data-i="lock"></i><span id="saved">训练记录保存在此浏览器</span></span
-      ><span>WaveLab <b> / </b>K 线训练台</span>
+      ><span>训练的大鲨鱼 <b> / </b>K 线训练台</span>
     </footer>
     <dialog id="dialog">
       <div class="dialog-head">
@@ -276,6 +279,6 @@
       <div id="dialogBody"></div>
     </dialog>
     <div id="toast" aria-live="polite" role="status"></div>
-    <script type="module" src="./src/app.js?v=20261124trend3"></script>
+    <script type="module" src="./src/app.js?v=20261124range2"></script>
   </body>
 </html>
