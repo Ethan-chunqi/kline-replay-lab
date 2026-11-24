@@ -2018,3 +2018,140 @@ details.exposure-method p { margin: 3px 0 0; line-height: 1.45; }
   .draw-family .draw-more { width: 21px; }
   .drawing-menu { left: 51px; }
 }
+
+/* The two trading modes remain the first navigation choices on every viewport. */
+.mast .mast-inner {
+  gap: clamp(16px, 2.4vw, 46px);
+}
+.mast nav {
+  align-self: center;
+  align-items: center;
+  gap: clamp(14px, 2vw, 32px);
+}
+.workspace-switch, .record-links {
+  display: flex;
+  align-items: center;
+}
+.workspace-switch {
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.mast .workspace-switch .nav {
+  gap: 7px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 5px 13px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+.mast .workspace-switch .nav:hover, .mast .record-links .nav:hover { color: var(--ink); }
+.mast .workspace-switch .nav.active,
+.mast .workspace-switch .nav[aria-current="page"] {
+  color: var(--mint);
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+.workspace-switch .nav.active:after { display: none; }
+.mast .workspace-switch i { display: inline-flex; }
+.workspace-switch svg { width: 16px; height: 16px; }
+.record-links {
+  gap: 14px;
+  border-left: 1px solid var(--line);
+  padding-left: clamp(14px, 2vw, 28px);
+}
+.mast .record-links .nav {
+  min-height: 36px;
+  padding: 3px 1px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.record-links .nav.active:after { bottom: 2px; }
+#workspaceTitle { white-space: nowrap; }
+#terminal .title-row { flex-wrap: wrap; }
+.workspace-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.workspace-status::before {
+  content: '';
+  flex: 0 0 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.workspace-status[data-state="connected"]::before { background: var(--fall, #168063); }
+.workspace-status:is([data-state="stale"],[data-state="connecting"])::before { background: var(--accent, #a76e1c); }
+.workspace-status:is([data-state="offline"],[data-state="error"])::before { background: var(--rise, #b74b51); }
+body:not([data-workspace="live"]) #liveStatus, #liveStatus:empty,
+body[data-workspace="live"] .replay .play-group,
+body[data-workspace="live"] .replay .progress-block,
+body[data-workspace="live"] #practiceRange { display: none; }
+
+body[data-workspace-pending] #terminal > :not(.page-title):not(#workspaceNotice),
+body[data-workspace-pending] #terminal :is(#todayBtn, #modeBadge) { display: none; }
+.workspace-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: clamp(18px, 3vw, 32px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.workspace-notice .notice-copy { min-width: 0; }
+.workspace-notice h2 { font-size: 17px; letter-spacing: 0; }
+.workspace-notice p { margin-top: 5px; color: var(--muted); overflow-wrap: anywhere; }
+.workspace-notice button { flex-shrink: 0; align-items: center; }
+
+@media (max-width: 880px) {
+  .mast .mast-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 12px;
+    height: auto;
+    padding-block: 7px;
+  }
+  .mast .brand { grid-area: 1 / 1; justify-self: start; }
+  .mast .mast-actions { grid-area: 1 / 2; }
+  .mast nav {
+    grid-area: 2 / 1 / 3 / -1;
+    justify-content: flex-start;
+    gap: 16px;
+    width: 100%;
+    height: auto;
+  }
+  .record-links { gap: 12px; padding-left: 16px; }
+  .mast .brand > span { display: inline; }
+  .mast .brand { width: auto; }
+  .mast .workspace-switch .nav, .mast .record-links .nav { flex: none; }
+}
+@media (max-width: 520px) {
+  .mast .mast-inner { padding: 6px 12px 7px; }
+  .mast .brand { font-size: 21px; gap: 6px; }
+  .mast .brand img { width: 26px; height: 26px; }
+  .mast nav { gap: 10px; justify-content: space-between; }
+  .mast .workspace-switch .nav { padding: 6px 8px; gap: 4px; min-height: 35px; font-size: 13px; }
+  .workspace-switch svg { width: 14px; height: 14px; }
+  .record-links { gap: 9px; padding-left: 0; border: 0; }
+  .mast .record-links .nav { min-height: 36px; font-size: 12px; }
+  .workspace-status { flex-basis: 100%; order: 1; }
+  .workspace-notice { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 359px) {
+  .mast .mast-inner { padding-inline: 8px; }
+  .mast .workspace-switch .nav { padding-inline: 6px; }
+  .record-links { gap: 7px; }
+}
