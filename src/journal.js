@@ -1,4 +1,5 @@
-import { getSnapshot } from './engine.js';
+import { renderExposure } from './exposure-display.js';
+import { getSnapshot } from './engine.js?v=20261124';
 
 const svgNS = 'http://www.w3.org/2000/svg';
 const paths = {
@@ -350,10 +351,10 @@ function downloadCSV(account, market, displayTime) {
       '成交时间（' + (market.timeZone || 'UTC') + '）',
       '委托编号',
       '方向',
-      '成交数量',
+      market.quantityUnit ? '成交数量（' + market.quantityUnit + '）' : '成交数量',
       '成交价',
       '费用',
-      '平仓数量',
+      market.quantityUnit ? '平仓数量（' + market.quantityUnit + '）' : '平仓数量',
       '已实现盈亏',
       '成交类型',
     ],
@@ -393,7 +394,7 @@ function downloadCSV(account, market, displayTime) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function fillsPanel(fills, precision, displayTime) {
+function fillsPanel(fills, market, displayTime) {
   const { node, head } = section('成交明细');
   const filter = el('select', 'jr-select');
   filter.setAttribute('aria-label', '筛选成交方向');
@@ -436,7 +437,8 @@ function fillsPanel(fills, precision, displayTime) {
     const table = el('table', 'jr-table');
     const thead = el('thead'),
       header = el('tr');
-    for (const label of ['成交时间', '方向', '数量', '成交价', '费用', '已实现盈亏'])
+    const units = market.quantityUnit ? '数量（' + market.quantityUnit + '）' : '数量';
+    for (const label of ['成交时间', '方向', units, '成交价', '费用', '已实现盈亏'])
       header.append(el('th', '', label));
     thead.append(header);
     table.append(thead);
@@ -450,8 +452,8 @@ function fillsPanel(fills, precision, displayTime) {
       tr.append(
         el('td', '', displayTime(f.time)),
         side,
-        el('td', '', f.qty.toLocaleString('zh-CN', { maximumFractionDigits: 8 })),
-        el('td', '', number(f.price, precision)),
+        el('td', '', market.quantityDecimals ? number(f.qty, market.quantityDecimals) : f.qty.toLocaleString('zh-CN', { maximumFractionDigits: 8 })),
+        el('td', '', number(f.price, market.precision ?? 2)),
         el('td', '', number(f.fee)),
         el('td', f.closedQty ? mood(f.realizedPnl) : 'jr-muted', f.closedQty ? signed(f.realizedPnl) : '—'),
       );
@@ -611,7 +613,7 @@ export function renderJournal(
   const marketInfo = [market.name, market.symbol].filter(Boolean).join(' · ');
   title.append(
     el('h1', '', '交易复盘'),
-    el('p', 'jr-muted', marketInfo + '　/　' + displayTime(bar?.time ?? account.lastTime)),
+    el('p', 'jr-muted', marketInfo + '　/　' + displayTime(bar?.time ?? account.lastTime) + (market.timeZone === 'UTC' ? ' UTC' : '')),
   );
   const actions = el('div', 'jr-actions');
   const exportButton = btn(
@@ -627,6 +629,8 @@ export function renderJournal(
   header.append(title, actions);
   const metrics = el('div', 'jr-metrics');
   const closed = account.trades;
+  const exposure = el('div', 'jr-metric jr-exposure exposure-stat');
+  renderExposure(exposure, session, bars);
   metrics.append(
     metric('账户净值', unit + number(snapshot.equity), '初始资金 ' + unit + number(account.initialCash, 0)),
     metric(
@@ -637,13 +641,14 @@ export function renderJournal(
     ),
     metric('平仓胜率', closed ? pct(snapshot.winRate) : '—', closed + ' 笔平仓成交'),
     metric('最大回撤', number(snapshot.maxDrawdownPct) + '%', '累计手续费 ' + unit + number(snapshot.fees)),
+    exposure,
   );
   const layout = el('div', 'jr-layout');
   const benchmark = benchmarkFor(session, bars, bar, snapshot.returnPct);
   layout.append(
     equityChart(account, bar, unit, displayTime, benchmark),
     directions(account.fills, unit),
-    fillsPanel(account.fills, market.precision ?? 2, displayTime),
+    fillsPanel(account.fills, market, displayTime),
     notesPanel(session, bar, onSave, displayTime),
   );
   root.append(header, metrics, layout, archivePanel(archives, onRestore));

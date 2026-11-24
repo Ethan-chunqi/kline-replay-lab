@@ -1,10 +1,13 @@
 // Historic periods use dated contracts or dated index observations throughout.
 import { archivePeriods, loadArchivePeriod } from './replay-archive.js?v=20261120b';
 import { indexArchivePeriods, loadIndexArchivePeriod } from './index-replay.js?v=20261120b';
-import { localPeriods, loadLocalPeriod } from './local-archive.js';
+import { localPeriods, loadLocalPeriod } from './local-archive.js?v=20261124';
+import { bitcoinPeriods, loadBitcoinPeriod } from './binance-history.js';
 import { rankArchivePeriods } from './random-period.js?v=20261120b';
 
 function sources(marketId, kind, base) {
+  if (marketId === 'btc') return kind === 'future' ? [] : bitcoinPeriods(base, marketId);
+  if (marketId === 'btcPerp') return kind === 'future' ? bitcoinPeriods(base, marketId) : [];
   const remote = kind === 'future' ? archivePeriods(marketId, base) : indexArchivePeriods(marketId, base);
   const entries = new Map(remote.map((item) => [item.key, item]));
   for (const item of localPeriods(marketId, kind, base)) {
@@ -62,7 +65,8 @@ export async function readHistoricalPeriod(marketId, kind, display, requestedYea
     const prior = cached.get(item.key);
     let data;
     if (item.local) {
-      data = await loadLocalPeriod(marketId, kind, base, item, {signal});
+      data = marketId === 'btc' || marketId === 'btcPerp' ? await loadBitcoinPeriod(base, item, {signal, marketId})
+        : await loadLocalPeriod(marketId, kind, base, item, {signal});
     } else if (prior) {
       data = {
         bars: prior.customBars, base, name: prior.feed.name, symbol: prior.feed.symbol,
