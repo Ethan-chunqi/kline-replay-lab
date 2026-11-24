@@ -613,3 +613,15 @@ html[data-theme='dark'] .jr-view .jr-tag-sell {
 html[data-theme='dark'] .jr-view .jr-textarea::placeholder {
   color: var(--muted);
 }
+
+.jr-view .jr-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.jr-view .jr-exposure .exposure-title { display: block; }
+.jr-view .jr-exposure .exposure-rate {
+  display: block; margin: 6px 0 3px; font-size: clamp(19px, 2.05vw, 34px);
+  line-height: 1.35; font-weight: 650; letter-spacing: -.045em;
+}
+@media (max-width: 800px) {
+  .jr-view .jr-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jr-view .jr-exposure { grid-column: 1 / -1; }
+  .jr-view .jr-exposure .exposure-title { display: flex; }
+}

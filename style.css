@@ -1996,3 +1996,25 @@ html[data-theme='dark'] #toast {
   .mast .nav { flex: 1; padding: 4px 7px; font-size: 13px; }
   .mast-actions { margin-left: auto; }
 }
+
+.exposure-stat { font-variant-numeric: tabular-nums; }
+.ticket .exposure-stat { margin: 8px 0 0; padding: 8px 0; border-bottom: 1px solid var(--soft); }
+.exposure-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.exposure-title > span, .exposure-times, details.exposure-method { color: var(--muted); font-size: 12px; }
+.exposure-rate { color: var(--ink); font-size: 17px; line-height: 1.3; }
+.exposure-times { margin-top: 2px; }
+details.exposure-method { margin: 4px 0 0; border: 0; padding: 0; }
+details.exposure-method summary {
+  display: list-item; list-style: disclosure-closed inside; width: fit-content; cursor: pointer;
+  color: inherit; font-weight: 400; font-size: 11px; padding: 0;
+}
+details.exposure-method[open] summary { list-style-type: disclosure-open; }
+details.exposure-method p { margin: 3px 0 0; line-height: 1.45; }
+
+@media (pointer: coarse) and (max-width: 620px) {
+  .plot-body .draw-tools { width: 49px; }
+  .draw-tools .draw-main, .draw-more { min-height: 36px; }
+  .draw-family .draw-main { width: 26px; }
+  .draw-family .draw-more { width: 21px; }
+  .drawing-menu { left: 51px; }
+}

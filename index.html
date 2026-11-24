@@ -16,7 +16,7 @@
     <meta name="description" content="比特币现货、中证股指期货和全球指数的模拟交易与历史 K 线回放训练。" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./style.css?v=20261124" />
-    <link rel="stylesheet" href="./journal.css" />
+    <link rel="stylesheet" href="./journal.css?v=20261124" />
     <link rel="stylesheet" href="./trade-history.css" />
   </head>
   <body>
@@ -173,6 +173,7 @@
               <span id="positionSummary">空仓</span
               ><button id="quickClose" class="flatten" data-action="closePosition" disabled>一键平仓</button>
             </div>
+            <section class="exposure-stat" id="exposureStats" aria-label="本次训练空仓率"></section>
             <section id="contractInfo" class="contract-info" aria-label="保证金与杠杆" hidden>
               <dl class="risk-metrics">
                 <div><dt id="marginRateLabel">开仓保证金率</dt><dd id="contractMarginRate"></dd></div>
