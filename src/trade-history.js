@@ -28,7 +28,7 @@ export function buildTradeHistory(sessions, currentSession) {
       rows.push({
         id: session.id + '/' + (fill.id ?? index + 1), sessionId: session.id, marketId: market.id,
         marketName, symbol, currency: market.currency, timeZone: market.timeZone,
-        instrumentKind: contract ? 'future' : 'spot',
+        instrumentKind: contract ? 'future' : 'spot', mode: session.live ? 'live' : 'replay',
         time: fill.time, recordedAt: fill.recordedAt ?? null, sequence: index,
         sessionUpdated: session.updated || session.created || 0,
         side: fill.side, direction, qty: fill.qty, qtyUnit: market.quantityUnit || (contract ? '手' : '单位'),

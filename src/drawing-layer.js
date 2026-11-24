@@ -10,11 +10,14 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   const timeAxis = chart.timeScale();
   const metrics = document.createElement('canvas').getContext('2d');
   metrics.font = textFont;
-  let items = [], tool = 'crosshair', cursor = 'crosshair', selected = -1, anchorHit = null;
+  let items = [], tool = 'trend', cursor = 'crosshair', selected = -1, anchorHit = null;
   let draft = [], hover = null, press = null, edit = null, version = 0, lastAnchor = null;
   let requestRedraw = () => {};
   const flags = { magnet: false, locked: false, hidden: false, keepDrawing: false };
   const selecting = () => tool === 'crosshair' || tool === 'pointer';
+  let trendColor = '#41bf88', repeatTrends = true;
+  const repeats = () => tool === 'trend' ? repeatTrends : flags.keepDrawing;
+  const editingTool = () => selecting() || (tool === 'trend' && !draft.length);
   const getDrawings = () => structuredClone(items);
   const save = () => callbacks.onDrawingChange?.(getDrawings());
 
@@ -99,6 +102,7 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     const pane = chart.paneSize(0);
     let best = null;
     for (let index = items.length - 1; index >= 0; index--) {
+      if (tool === 'trend' && items[index].type !== 'trend') continue;
       const shape = geometry(items[index], pane);
       if (!shape) continue;
       const handle = shape.handles.find((h) => Math.hypot(x - h.x, y - h.y) <= radius + 1);
@@ -188,8 +192,9 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
             if (i === selected) anchor = editorAnchor(shape, mediaSize);
           });
           const points = hover ? [...draft, hover] : draft;
-          if (!selecting() && points.length) {
+          if (!selecting() && points.length && (tool !== 'trend' || draft.length)) {
             const preview = { type: tool, points };
+            if (tool === 'trend') preview.color = trendColor;
             const shape = geometry(preview, mediaSize);
             if (shape) paint(context, preview, shape, true, true);
           }
@@ -212,7 +217,7 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
       });
     },
     hitTest(x, y) {
-      const hit = selecting() && hitAt(x, y);
+      const hit = editingTool() && hitAt(x, y);
       return hit ? { externalId: 'drawing-' + hit.index, zOrder: 'top', distance: hit.distance,
         cursorStyle: hit.handle ? 'crosshair' : 'move' } : null;
     },
@@ -230,13 +235,19 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     select(-1);
     draft = []; hover = null; press = null; version++;
     tool = next === 'pointer' || Object.hasOwn(anchorCounts, next) ? next : 'crosshair';
+    if (!selecting() && (flags.hidden || flags.locked)) tool = cursor;
     if (selecting()) cursor = tool;
     applyCursor();
-    callbacks.onToolChange?.(tool);
+    callbacks.onToolChange?.(tool, repeats());
     requestRedraw();
   }
   function setDrawingOptions(next = {}) {
-    for (const key of Object.keys(flags)) if (typeof next[key] === 'boolean') flags[key] = next[key];
+    for (const key of Object.keys(flags)) {
+      if (typeof next[key] !== 'boolean') continue;
+      if (key === 'keepDrawing' && tool === 'trend') repeatTrends = next[key];
+      else flags[key] = next[key];
+    }
+    if (validColor(next.trendColor)) trendColor = next.trendColor;
     if (flags.hidden || flags.locked) setTool(cursor);
     requestRedraw();
   }
@@ -263,7 +274,7 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   }
   function clearDrawings() {
     if (flags.locked) return;
-    setTool(cursor);
+    setTool(tool === 'trend' ? 'trend' : cursor);
     items = [];
     requestRedraw();
     save();
@@ -304,13 +315,13 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     if (!ready() || !event.isPrimary || event.button !== 0 || !inPane(event)) return;
     const pos = position(event);
     root.focus({ preventScroll: true });
-    if (selecting()) {
-      const hit = hitAt(pos.x, pos.y, event.pointerType === 'touch' ? 14 : 7);
-      select(hit?.index ?? -1, hit);
-      if (!hit) return;
+    const hit = editingTool() && hitAt(pos.x, pos.y, event.pointerType === 'touch' ? 14 : 7);
+    if (hit) {
+      select(hit.index, hit);
       edit = { ...pos, ...hit, original: structuredClone(items[hit.index]), id: event.pointerId, moved: false };
     } else {
-      if (flags.hidden || flags.locked) return;
+      select(-1);
+      if (selecting() || flags.hidden || flags.locked) return;
       press = { ...pos, id: event.pointerId };
     }
     event.preventDefault();
@@ -365,6 +376,7 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     }
     if (tool === 'horizontalSegment') points[1].price = points[0].price;
     const line = { type: tool, points };
+    if (tool === 'trend') line.color = trendColor;
     if (tool === 'horizontal') Object.assign(line, point);
     if (tool === 'text') {
       const ticket = ++version;
@@ -375,7 +387,7 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     }
     items.push(line);
     draft = []; hover = null;
-    if (!flags.keepDrawing) {
+    if (!repeats()) {
       setTool(cursor);
       select(items.length - 1, pos);
     }
@@ -399,7 +411,8 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     if (hover) { hover = null; requestRedraw(); }
   });
   for (const name of ['touchstart', 'touchmove']) root.addEventListener(name, (event) => {
-    if (!edit && !press && selecting()) return;
+    // A mobile user can still scroll vertically over an armed trend tool before a drag edit.
+    if (!edit && (tool === 'trend' || (!press && selecting()))) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
   }, { capture: true, passive: false });
@@ -427,6 +440,10 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     if (selected >= 0) callbacks.onDrawingSelection?.(style(items[selected]));
     requestRedraw();
   }
-  return { update, setTool, setDrawingOptions, getDrawings, clearDrawings, setTrendStyle, deleteSelectedTrend,
+  function cancelDrawing() {
+    setTool(draft.length ? tool : cursor);
+  }
+  setTool('trend');
+  return { update, setTool, cancelDrawing, setDrawingOptions, getDrawings, clearDrawings, setTrendStyle, deleteSelectedTrend,
     selectAt, selecting, themeChanged, destroy };
 }

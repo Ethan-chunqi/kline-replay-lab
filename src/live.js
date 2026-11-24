@@ -1,4 +1,5 @@
 // Quote samples drive execution. Source candles and day-to-date extremes are display data only.
+import { isFreshBitcoinQuote } from './bitcoin-quote.js';
 import { advanceBar } from './engine.js?v=20261124';
 import { MARKETS } from './market.js?v=20261124';
 
@@ -166,6 +167,8 @@ function newerInSecond(previous, next) {
 
 /** Mutates account, liveQuote and customBars. A full source-bar refresh can replace customBars afterward. */
 export function applyLiveQuote(session, quote) {
+  const bitcoin = session.marketId === 'btc' || session.marketId === 'btcPerp';
+  if (bitcoin && !isFreshBitcoinQuote(session.marketId, quote)) throw Error('币安市场报价已失效，等待新的成交。');
   const current = markFromQuote(quote);
   const account = session.account;
   const previous = session.liveQuote;
@@ -180,7 +183,9 @@ export function applyLiveQuote(session, quote) {
     account.lastPrice === previous.price;
   const consumed = previous && (session.liveAppliedTime === previous.time || aligned);
   if (consumed && previous.time === quote.time && !newerInSecond(previous, quote)) return unchanged;
-  const time = nextEngineTime(account, quote.time);
+  const exactTime = bitcoin ? quote.tradeTimeMs / 1000 : quote.time;
+  const time = bitcoin && (account.lastTime == null || exactTime > unix(account.lastTime)) ? exactTime
+    : nextEngineTime(account, quote.time);
   if (time === null) return unchanged;
   const period = sourcePeriod(session);
   const clock = marketClock(session, quote);
@@ -197,7 +202,7 @@ export function applyLiveQuote(session, quote) {
     previous.volume === quote.volume;
   if (!offSessionRepeat) {
     current.time = time;
-    if (consumed && account.lastTime != null) {
+    if (!bitcoin && consumed && account.lastTime != null) {
       current.open = account.lastPrice;
       current.high = Math.max(current.open, current.close);
       current.low = Math.min(current.open, current.close);

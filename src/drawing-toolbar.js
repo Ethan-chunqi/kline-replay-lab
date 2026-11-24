@@ -19,6 +19,7 @@ const singlePoint = new Set(['horizontal', 'vertical', 'crossLine', 'priceLine',
 const cursorTools = ['pointer', 'crosshair'];
 
 function hint(tool) {
+  if (tool === 'trend') return '点两处画趋势线，点已有线可编辑';
   if (tool === 'parallel') return '先点轨道线的两个端点，再点第三点确定宽度';
   if (tool === 'text') return '点击图表放置文本，双击已有文本可编辑';
   if (singlePoint.has(tool)) return '点击图表放置' + labels[tool];
@@ -77,7 +78,9 @@ export function createDrawingToolbar({ rail, menu, onTool, onOption, onAction, n
     menu.style.top = Math.max(3, Math.min(y, bodyBox.height - menu.offsetHeight - 3)) + 'px';
     menu.querySelector('[aria-checked="true"]').focus({ preventScroll: true });
   }
-  function setTool(tool) {
+  function setTool(tool, keepDrawing) {
+    options.keepDrawing = keepDrawing;
+    rail.querySelector('[data-option="keepDrawing"]').setAttribute('aria-pressed', String(keepDrawing));
     for (const [group, members] of Object.entries(groups)) {
       if (!members.some(([id]) => id === tool)) continue;
       remembered[group] = tool;
@@ -134,6 +137,6 @@ export function createDrawingToolbar({ rail, menu, onTool, onOption, onAction, n
   document.addEventListener('pointerdown', (e) => { if (!rail.contains(e.target) && !menu.contains(e.target)) closeMenu(); });
   document.addEventListener('focusin', (e) => { if (!rail.contains(e.target) && !menu.contains(e.target)) closeMenu(); });
   window.addEventListener('resize', () => closeMenu());
-  setTool('crosshair');
+  setTool('trend', true);
   return { setTool, options };
 }

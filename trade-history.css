@@ -44,3 +44,8 @@
   .th-table td small { margin: 1px 0 0; }
   .th-heading { padding: 11px 14px; }
 }
+
+@media (max-width: 620px) {
+  .th-filters { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .th-filter, .th-filter select { min-width: 0; width: 100%; }
+}

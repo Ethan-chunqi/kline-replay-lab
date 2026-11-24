@@ -1,5 +1,5 @@
 import { MARKETS } from './market.js?v=20261124';
-import { buildTradeHistory, summarizeTradeHistory } from './trade-history.js';
+import { buildTradeHistory, summarizeTradeHistory } from './trade-history.js?v=20261124modes';
 
 const viewState = new WeakMap();
 const pageSize = 20;
@@ -69,6 +69,7 @@ function totals(rows) {
 }
 
 const columns = ['品种', '行情时间', '方向', '成交数量', '成交价格', '手续费', '平仓净盈亏', '训练记录'];
+const modeNames = { live: '实时交易', replay: '历史训练' };
 const zoneNames = { UTC: 'UTC', 'Asia/Shanghai': '北京时间', 'Asia/Hong_Kong': '香港时间', 'America/New_York': '纽约时间' };
 
 function tradeRow(row, currentId) {
@@ -93,9 +94,9 @@ function tradeRow(row, currentId) {
   cell(6, row.realizedPnl == null ? '开仓时未结算' : money(row.realizedPnl, row.currency, true), '',
     row.realizedPnl == null ? 'th-muted' : 'th-pnl ' + valueClass(row.realizedPnl));
   const shortId = String(row.sessionId).slice(0, 8);
-  const ref = (row.sessionId === currentId ? '当前训练' : '训练') + ' #' + shortId;
+  const ref = modeNames[row.mode] + ' #' + shortId + (row.sessionId === currentId ? ' · 当前' : '');
   const account = cell(7, ref, row.recordedAt ? '记录于 ' + timestamp(row.recordedAt) : '');
-  account.title = (row.recordedAt ? '本地记录时间 ' + timestamp(row.recordedAt) + ' · ' : '') + '训练 ' + row.sessionId;
+  account.title = (row.recordedAt ? '本地记录时间 ' + timestamp(row.recordedAt) + ' · ' : '') + modeNames[row.mode] + ' ' + row.sessionId;
   return tr;
 }
 
@@ -115,7 +116,7 @@ function ledger(rows, currentId) {
 
 export function renderTradeHistory(root, sessions, currentSession) {
   const rows = buildTradeHistory(sessions, currentSession);
-  const state = viewState.get(root) || { scope: 'all', market: 'all', page: 1 };
+  const state = viewState.get(root) || { scope: 'all', mode: 'all', market: 'all', page: 1 };
   viewState.set(root, state);
   const tradedMarkets = new Set(rows.map((row) => row.marketId));
   const marketNames = new Map(MARKETS.filter((market) => tradedMarkets.has(market.id))
@@ -131,7 +132,7 @@ export function renderTradeHistory(root, sessions, currentSession) {
 
   function draw() {
     const filtered = rows.filter((row) => (state.scope !== 'current' || row.sessionId === currentId) &&
-      (state.market === 'all' || row.marketId === state.market));
+      (state.mode === 'all' || row.mode === state.mode) && (state.market === 'all' || row.marketId === state.market));
     const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
     state.page = Math.min(state.page, pages);
     const page = el('div', 'th-view');
@@ -141,6 +142,7 @@ export function renderTradeHistory(root, sessions, currentSession) {
     const filters = el('div', 'th-filters');
     filters.append(
       selectField('训练范围', [['all', '全部训练'], ['current', '当前训练']], state.scope, (v) => filter('scope', v)),
+      selectField('交易模式', [['all', '全部模式'], ...Object.entries(modeNames)], state.mode, (v) => filter('mode', v)),
       selectField('品种', [['all', '全部品种'], ...marketNames], state.market, (v) => filter('market', v)),
     );
     header.append(title, filters);

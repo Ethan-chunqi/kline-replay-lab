@@ -1,11 +1,12 @@
 import { MARKETS, generateBars } from './market.js?v=20261124';
-import { timeframeOptions, periodBars, executionTime, nextDisplayCursor } from './periods.js?v=20261120b';
+import { timeframeOptions, periodBars, executionTime, nextDisplayCursor, exchangeClock, tradingWindows } from './periods.js?v=20261120b';
 import { anchoredScenario, SNAPSHOT_QUOTES } from './anchor.js';
 import { pickRandomStart, visitedBarRanges } from './random-period.js?v=20261120b';
 import { replayCatalog, readHistoricalPeriod } from './replay-library.js?v=20261124';
-import { fetchMarketQuote, loadChartFeed } from './feed-service.js?v=20261124';
+import { fetchMarketQuote, loadChartFeed } from './feed-service.js?v=20261124live2';
+import { subscribeBitcoinLive, applyBitcoinCandle, isFreshBitcoinQuote } from './bitcoin-stream.js?v=20261124live2';
 import { futuresTerms } from './eastmoney.js';
-import { tradingBar, applyLiveQuote } from './live.js?v=20261124';
+import { tradingBar, applyLiveQuote } from './live.js?v=20261124live2';
 import {
   bitcoinPerpTerms,
   bitcoinOpeningCapacity,
@@ -19,14 +20,14 @@ import {
   closePosition,
   updateProtection,
 } from './engine.js?v=20261124';
-import { createTradingChart } from './chart.js?v=20261124';
+import { createTradingChart } from './chart.js?v=20261124trend3';
 import { renderJournal } from './journal.js?v=20261124';
-import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261124';
+import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261124live2';
 import { openStorage } from './storage.js';
 import { icon } from './icons.js?v=20261124';
-import { createDrawingToolbar } from './drawing-toolbar.js';
+import { createDrawingToolbar } from './drawing-toolbar.js?v=20261124trend3';
 import { renderExposure } from './exposure-display.js';
-import { renderTradeHistory } from './trade-history-view.js';
+import { renderTradeHistory } from './trade-history-view.js?v=20261124live2';
 
 const $ = (selector) => document.querySelector(selector);
 const elements = (id) => document.getElementById(id);
@@ -62,6 +63,12 @@ const sessions = new Map();
 const initialViewHash = location.hash;
 let pendingInitialAction = '';
 let activeDays = [];
+let workspaceRequest = null;
+let btcSubscription = null;
+let liveTransport = 'connecting';
+let lastLiveSave = 0;
+let livePaint = 0;
+let lastQuoteCheck = 0;
 let s,
   market,
   bars = [],
@@ -293,6 +300,10 @@ function displayMarket(session = s) {
 }
 function activate(next) {
   stop();
+  stopBitcoinStream();
+  clearWorkspaceRequest();
+  lastQuoteCheck = 0;
+  liveTransport = 'connecting';
   s = next;
   s.instrumentKind ??= s.account.contract ? 'future' : 'spot';
   loadVersion++;
@@ -331,12 +342,82 @@ function activate(next) {
   elements('protection').open = false;
   elements('speed').value = s.speed || '1';
   elements('chartPanel').classList.remove('expanded');
-  chart.setTool('crosshair');
+  chart.setTool('trend');
   setView('terminal');
+  if (s.live) {
+    if (market.continuous) { startBitcoinStream(); void refreshBitcoinHistory(next); }
+    else void refreshLive();
+  }
   return save();
 }
 let marketLoad = null;
 let periodLoad = null, lastPeriodMarkup = '';
+function clearWorkspaceRequest() {
+  workspaceRequest?.controller.abort();
+  clearTimeout(workspaceRequest?.retry);
+  workspaceRequest = null;
+  document.body.removeAttribute('data-workspace-pending');
+  elements('workspaceNotice').hidden = true;
+}
+function showWorkspaceNavigation(live, next = 'terminal') {
+  const mode = live ? 'live' : 'replay';
+  document.body.dataset.workspace = mode;
+  elements('workspaceTitle').textContent = live ? '实时交易' : '历史训练';
+  for (const item of all('nav .nav')) {
+    const active = item.dataset.action === (next === 'terminal' ? mode : next);
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-current', active ? 'page' : 'false');
+  }
+}
+async function openWorkspace(live, marketId, savedSession) {
+  stop();
+  clearWorkspaceRequest();
+  marketLoad?.controller.abort();
+  marketLoad = null;
+  periodLoad?.controller.abort();
+  ++loadVersion;
+  loadBusy = randomBusy = false;
+  const recent = savedSession || [...sessions.values()].filter(item =>
+    !!item.live === live && (!marketId || item.marketId === marketId)
+  ).sort((a, b) => b.updated - a.updated)[0];
+  if (recent) {
+    if (s === recent) { chart.setTool('trend'); setView('terminal'); }
+    else await activate(recent);
+    return;
+  }
+  const id = marketId || (live ? 'btcPerp' : 'csi1000');
+  const request = { live, id, controller: new AbortController() };
+  workspaceRequest = request;
+  view = 'terminal';
+  cleanJournal?.();
+  cleanJournal = null;
+  elements('terminal').hidden = false;
+  elements('history').hidden = elements('journal').hidden = true;
+  showWorkspaceNavigation(live);
+  history.replaceState(history.state, '', live ? '#live' : '#replay');
+  document.body.setAttribute('data-workspace-pending', '');
+  elements('workspaceNotice').hidden = false;
+  elements('workspaceNoticeTitle').textContent = '正在打开' + humanName(byId(id).name);
+  elements('workspaceNoticeText').textContent = live ? '正在连接行情源，等待交易所报价。' : '正在载入历史 K 线。';
+  elements('liveStatus').textContent = live ? '连接中' : '';
+  elements('liveStatus').dataset.state = 'connecting';
+  const retry = elements('workspaceNotice').querySelector('[data-action=retryWorkspace]');
+  retry.hidden = true;
+  try {
+    const signal = AbortSignal.any([request.controller.signal, AbortSignal.timeout(live ? 20000 : 30000)]);
+    await startFeed({ marketId:id, kind:defaultKind(id), base:'5m', live, archiveYear:'auto', signal });
+  } catch (error) {
+    if (workspaceRequest !== request) return;
+    elements('workspaceNoticeTitle').textContent = humanName(byId(id).name) + (live ? '行情暂不可用' : '历史数据暂不可用');
+    elements('workspaceNoticeText').textContent = live ? '未取得可核实的报价，模拟交易已暂停。可以重试或切换到历史训练。' : '请检查网络后重试。';
+    elements('liveStatus').textContent = live ? '未连接' : '';
+    elements('liveStatus').dataset.state = 'offline';
+    retry.hidden = false;
+    if (live) request.retry = setTimeout(() => {
+      if (workspaceRequest === request && !document.hidden) void openWorkspace(live, id);
+    }, 20000);
+  }
+}
 async function switchMarket(id, requestedPeriod) {
   const target = byId(id);
   if (!target || !s) return;
@@ -392,20 +473,13 @@ async function switchMarket(id, requestedPeriod) {
   const options = { marketId: id, kind, base, period: display === base ? 'BASE' : display, archiveYear: year };
   async function open(useLive) {
     request.version = loadVersion + 1;
-    const signal = useLive ? AbortSignal.any([request.controller.signal, AbortSignal.timeout(7000)]) :
+    const signal = useLive ? AbortSignal.any([request.controller.signal, AbortSignal.timeout(18000)]) :
       request.controller.signal;
     await startFeed({ ...options, live: useLive, signal });
   }
   const isCurrent = () => marketLoad === request && !request.controller.signal.aborted;
   try {
-    try {
-      await open(live);
-    } catch (error) {
-      if (!isCurrent() || request.version !== loadVersion) return;
-      if (!live) throw error;
-      notify(name + '的最新行情暂不可用，正在打开历史回放…');
-      await open(false);
-    }
+    await open(live);
     if (!isCurrent() || s.marketId !== id) return;
     const actual = effectivePeriod(s.period);
     const changed = actual !== display ? ' · ' + (baseNames[baseIDs.indexOf(actual)] || actual) : '';
@@ -763,7 +837,7 @@ function renderTicket() {
   }
   const pos = s.account.position,
     terms = s.account.contract;
-  elements('quickClose').disabled = !pos.qty;
+  elements('quickClose').disabled = !pos.qty || !liveGate().ok;
   elements('qtyUnit').textContent = unitName();
   renderExposure(elements('exposureStats'), s, bars);
   elements('positionSummary').textContent = pos.qty
@@ -829,7 +903,7 @@ function renderTicket() {
   elements('limitField').hidden = elements('orderType').value !== 'stopLimit';
   elements('priceField').hidden = elements('orderType').value === 'market';
   elements('priceLabel').textContent = elements('orderType').value === 'limit' ? '限价' : '触发价';
-  elements('fractions').innerHTML = [25, 50, 75, 100]
+  if (!elements('fractions').children.length) elements('fractions').innerHTML = [25, 50, 75, 100]
     .map((n) => '<button data-fraction="' + n + '">' + n + '%</button>')
     .join('');
   ticketEstimate();
@@ -868,9 +942,9 @@ function renderPlay() {
       (s.account.contract && domestic(s.marketId) ? '公开行情或延时15分钟 · ' : '') +
       (refreshIssue ? esc(refreshIssue) + ' · ' : '') +
       (s.feed.limitedPeriod === effectivePeriod(s.period) ? '按现有样本合成 · ' : '') +
-      (s.feed.quoteOnly ? '仅有当日行情 · ' : s.feed.historyCached ? '使用本机历史缓存 · ' : '') +
+      (s.feed.quoteOnly ? (market.continuous ? '按收到的成交开始绘图 · ' : '仅有当日行情 · ') : s.feed.historyCached ? '使用本机历史缓存 · ' : '') +
       '报价 ' +
-      esc(fmtTime(s.liveQuote.time, market.timeZone)) + (market.timeZone === 'UTC' ? ' UTC' : '') +
+      esc(fmtTime(s.liveQuote.time, market.timeZone)) + ':' + String(s.liveQuote.time % 60).padStart(2, '0') + (market.timeZone === 'UTC' ? ' UTC' : '') +
       ' · <a href="' +
       esc(s.feed.quoteUrl) +
       '" target="_blank" rel="noopener">' + quoteSource(s.marketId) + '</a>';
@@ -902,7 +976,7 @@ function render() {
     : s.customBars
       ? 'CSV 历史回放'
       : '模拟生成行情';
-  elements('todayBtn').textContent = loadBusy ? '正在取行情…' : s.live ? '刷新报价' : '今日行情';
+  elements('todayBtn').textContent = loadBusy ? '正在取行情…' : s.live ? '刷新报价' : '看实时行情';
   elements('todayBtn').disabled = loadBusy;
   const main =
     domestic(s.marketId) &&
@@ -945,6 +1019,7 @@ function render() {
   renderTicket();
   renderPlay();
   renderLedger();
+  renderLiveControls();
 }
 function stop() {
   if (timer) clearInterval(timer);
@@ -984,11 +1059,8 @@ function setView(next) {
   elements('terminal').hidden = next !== 'terminal';
   elements('journal').hidden = next !== 'journal';
   elements('history').hidden = next !== 'history';
-  history.replaceState(history.state, '', '#' + next);
-  for (const item of all('nav .nav')) {
-    item.classList.toggle('active', item.dataset.action === next);
-    item.setAttribute('aria-current', item.dataset.action === next ? 'page' : 'false');
-  }
+  showWorkspaceNavigation(!!s.live, next);
+  history.replaceState(history.state, '', '#' + (next === 'terminal' ? (s.live ? 'live' : 'replay') : next));
   if (next === 'terminal') render();
   else if (next === 'history') {
     elements('chartPanel').classList.remove('expanded');
@@ -1029,11 +1101,12 @@ function setView(next) {
   }
 }
 window.addEventListener('hashchange', () => {
-  if (!s) return;
-  if (location.hash === '#bitcoin') {
-    setView('terminal');
-    void switchMarket('btcPerp');
-  } else if (['#terminal', '#history', '#journal'].includes(location.hash)) setView(location.hash.slice(1));
+  if (location.hash === '#live') void openWorkspace(true);
+  else if (location.hash === '#replay' || location.hash === '#bitcoin') void openWorkspace(false, location.hash === '#bitcoin' ? 'btcPerp' : undefined);
+  else if (s && ['#terminal', '#history', '#journal'].includes(location.hash)) {
+    clearWorkspaceRequest();
+    setView(location.hash.slice(1));
+  }
 });
 const dialog = elements('dialog');
 function sessionConfig() {
@@ -1099,7 +1172,7 @@ function setArchiveYear(value) {
 }
 function renderYearPicker() {
   const field = elements('archiveYear');
-  field.hidden = s.base === 'CSV';
+  field.hidden = s.live || s.base === 'CSV';
   if (field.hidden) return;
   const {years} = replayCatalog(s.marketId, s.instrumentKind, effectivePeriod(s.period));
   const choices = ['<option value="auto">往年随机</option>',
@@ -1288,7 +1361,7 @@ async function choosePeriod(period) {
         const available = frameChoices.find((o) => effectivePeriod(o.id) === desired);
         if (available) {
           s.period = available.id;
-          chart.setTool('crosshair');
+          chart.setTool('trend');
           render();
           save();
         } else {
@@ -1309,8 +1382,11 @@ async function choosePeriod(period) {
         s.feed.quoteOnly = false;
         s.feed.historyCached = false;
         s.feed.historySource = feed.historySource || quoteSource(s.marketId);
-        const latest = s.liveQuote.time > feed.quote.time ? s.liveQuote : feed.quote;
-        applyBoardQuote(s, latest);
+        const latest = (s.liveQuote.tradeTimeMs ?? s.liveQuote.time * 1000) > (feed.quote.tradeTimeMs ?? feed.quote.time * 1000)
+          || (market.continuous && s.liveQuote.sequence > feed.quote.sequence) ? s.liveQuote : feed.quote;
+        if (market.continuous ? isFreshBitcoinQuote(s.marketId, latest) : stockQuoteState(s, latest) === 'fresh')
+          applyBoardQuote(s, latest);
+        if (market.continuous) startBitcoinStream();
         bars = s.customBars;
         s.cursor = bars.length - 1;
         // Account history stays intact even when the displayed base changes.
@@ -1329,7 +1405,7 @@ async function choosePeriod(period) {
       if (!frameChoices.some((x) => x.id === period)) return;
       s.period = period;
     }
-    chart.setTool('crosshair');
+    chart.setTool('trend');
     render();
     save();
   } catch (err) {
@@ -1338,7 +1414,7 @@ async function choosePeriod(period) {
     if (s.live && available) {
       s.period = available.id;
       s.feed.limitedPeriod = desired;
-      chart.setTool('crosshair');
+      chart.setTool('trend');
       render();
       save();
       notify('已按当前已有的 ' + bars.length + ' 根' + baseLabel() + ' K 线合成。');
@@ -1428,7 +1504,7 @@ function cachedBars(marketId, base, symbol) {
   const old = [...sessions.values()].find(
     (x) =>
       x.marketId === marketId &&
-      x.feed?.symbol === symbol &&
+      x.live && x.feed?.symbol === symbol &&
       !x.feed.anchored &&
       !x.feed.quoteOnly &&
       x.base === base &&
@@ -1485,7 +1561,15 @@ async function startFeed({
       const q = await fetchMarketQuote(marketId, request);
       signal?.throwIfAborted();
       const cached = cachedBars(marketId, base, q.symbol);
-      if (cached) {
+      if (byId(marketId).continuous) {
+        // A confirmed trade can start a partial candle while historical depth is unavailable.
+        const minutes = base === '1D' ? 1440 : parseInt(base) * (base.endsWith('H') ? 60 : 1);
+        const width = minutes * 60;
+        const time = base === '1D' ? q.tradeDate : Math.floor(q.time / width) * width;
+        quoteOnly = true;
+        dataset = { quote:q, name:q.name, symbol:q.symbol, tradeDate:q.tradeDate, quoteUrl:q.quoteUrl,
+          bars:[{time, open:q.price, high:q.price, low:q.price, close:q.price, volume:0}] };
+      } else if (cached) {
         dataset = {
           quote: q,
           name: q.name,
@@ -1567,18 +1651,155 @@ async function startFeed({
       slippageBps,
       allowShort,
     });
+    if (!quoteOnly && !dataset.historyCached) next.lastHistoryFetch = Date.now();
     await activate(next);
   } finally {
     if (version === loadVersion || !loadBusy) {
       loadBusy = false;
       elements('todayBtn').disabled = false;
       if (s) renderPlay();
-      elements('todayBtn').textContent = s?.live ? '刷新报价' : '今日行情';
+      elements('todayBtn').textContent = s?.live ? '刷新报价' : '看实时行情';
     }
   }
 }
+function stockQuoteState(session, quote) {
+  const profile = byId(session.marketId);
+  const now = Date.now();
+  const current = exchangeClock(Math.floor(now / 60000) * 60, profile);
+  const day = new Date(current.date + 'T12:00:00Z').getUTCDay();
+  const inSession = day !== 0 && day !== 6 && tradingWindows(profile, current.date)
+    .some(([open, close]) => current.minute >= open && current.minute < close);
+  if (!inSession) return 'closed';
+  const age = now - quote.time * 1000;
+  if (current.date !== quote.tradeDate || age > 90000 || age < -3000) return 'delayed';
+  return 'fresh';
+}
+function liveGate() {
+  if (!s?.live) return { ok:true };
+  if (!navigator.onLine || liveTransport === 'offline') return { status:'offline', text:'行情断开 · 暂停成交' };
+  if (market.continuous) {
+    if (liveTransport === 'connecting') return { status:'connecting', text:'正在连接实时成交' };
+    if (!isFreshBitcoinQuote(s.marketId, s.liveQuote)) return { status:'stale', text:'报价已过期 · 暂停成交' };
+    return { ok:true, status:'connected', text:liveTransport === 'websocket' ? '币安实时推送' : '币安实时轮询' };
+  }
+  const state = stockQuoteState(s, s.liveQuote);
+  if (state === 'closed') return { status:'stale', text:'休市 · 最近报价' };
+  if (state === 'delayed') return { status:'stale', text:'报价延时 · 暂停成交' };
+  if (liveTransport !== 'polling' || Date.now() - lastQuoteCheck > 35000)
+    return { status:'connecting', text:'等待最新报价' };
+  return { ok:true, status:'connected', text:'行情轮询 · 15 秒' };
+}
+function renderLiveControls() {
+  if (!s || workspaceRequest) return;
+  const gate = liveGate();
+  const status = elements('liveStatus');
+  if (status.textContent !== (gate.text || '')) status.textContent = gate.text || '';
+  status.dataset.state = gate.status || '';
+  const disabled = s.live && !gate.ok;
+  const submitButton = elements('submitOrder');
+  submitButton.disabled = disabled;
+  submitButton.title = disabled ? gate.text : '';
+  for (const button of all('[data-action="closePosition"]')) button.disabled = disabled || !s.account.position.qty;
+}
+function requireLiveQuote() {
+  if (workspaceRequest || marketLoad) throw Error('请等待行情切换完成');
+  const gate = liveGate();
+  if (!gate.ok) throw Error(gate.text + '，请等待可交易的最新报价。');
+}
+function stopBitcoinStream() {
+  btcSubscription?.();
+  btcSubscription = null;
+  clearTimeout(livePaint);
+  livePaint = 0;
+}
+function paintLiveSoon() {
+  if (livePaint || document.hidden || view !== 'terminal' || workspaceRequest) return;
+  livePaint = setTimeout(() => {
+    livePaint = 0;
+    if (!document.hidden && s?.live && view === 'terminal' && !workspaceRequest) render();
+  }, 240);
+}
+// Retain each minute's first, last and extreme marks for the journal and drawdown curve.
+function compactLiveMinute(series, field) {
+  if (!series || series.length < 5) return;
+  const start = series.length - 5;
+  const points = series.slice(start);
+  if (Math.floor(points[0].time / 60) !== Math.floor(points[4].time / 60)) return;
+  const values = points.map(p => p[field]);
+  const extremes = new Set([0, 4, values.indexOf(Math.min(...values)), values.indexOf(Math.max(...values))]);
+  series.splice(start, 5, ...points.filter((_, index) => extremes.has(index)));
+}
+function recordLiveMark(session, result) {
+  if (!result.changed || !session.markHistory) return;
+  const {lastTime:time, lastPrice:price} = session.account;
+  if (session.markHistory.at(-1)?.time !== time) session.markHistory.push({time, price});
+  compactLiveMinute(session.markHistory, 'price');
+  compactLiveMinute(session.account.equityCurve, 'equity');
+}
+function startBitcoinStream() {
+  stopBitcoinStream();
+  if (!s?.live || !market.continuous) return;
+  const session = s;
+  liveTransport = 'connecting';
+  btcSubscription = subscribeBitcoinLive(session.marketId, session.base, {
+    initialQuote: session.liveQuote,
+    onQuote(quote) {
+      if (s !== session || !isFreshBitcoinQuote(session.marketId, quote)) return;
+      const result = applyBoardQuote(session, quote);
+      if (!result.changed) return;
+      bars = session.customBars;
+      session.cursor = bars.length - 1;
+      session.feed.tradeDate = quote.tradeDate;
+      watch.set(session.marketId, {quote});
+      recordLiveMark(session, result);
+      if (result.newFills.length || Date.now() - lastLiveSave > 15000) {
+        lastLiveSave = Date.now();
+        void save();
+      }
+      if (result.newFills.length && view === 'history') renderTradeHistory(elements('history'), sessions, s);
+      paintLiveSoon();
+    },
+    onCandle(update) {
+      if (s === session && applyBitcoinCandle(session, update)) paintLiveSoon();
+    },
+    onStatus(state) {
+      if (s !== session) return;
+      liveTransport = state;
+      renderLiveControls();
+    },
+  });
+}
+const restoringDepth = new WeakMap();
+async function refreshBitcoinHistory(session, force = false) {
+  if (restoringDepth.get(session) === session.base || (!force && Date.now() - (session.lastHistoryFetch || 0) < 90000)) return;
+  const base = session.base;
+  restoringDepth.set(session, base);
+  try {
+    const data = await loadChartFeed(session.marketId, base, {limit:720, signal:AbortSignal.timeout(9000)});
+    if (s !== session || s.base !== base || !data.bars.length) return;
+    const epoch = (bar) => typeof bar.time === 'number' ? bar.time : Date.parse(bar.time) / 1000;
+    const last = epoch(data.bars.at(-1));
+    const newerLocal = session.liveQuote.sequence > data.quote.sequence;
+    const tail = session.customBars.filter(bar => epoch(bar) > last || (epoch(bar) === last && newerLocal));
+    session.customBars = data.bars;
+    for (const bar of tail) applyBitcoinCandle(session, {
+      marketId:session.marketId, base, bar, asOfMs:data.quote.tradeTimeMs,
+    });
+    session.feed.quoteOnly = false;
+    session.feed.historyCached = false;
+    session.feed.historySource = data.historySource;
+    bars = session.customBars;
+    session.cursor = bars.length - 1;
+    session.lastHistoryFetch = Date.now();
+    frameChoices = timeframeOptions(base, bars, market.region);
+    paintLiveSoon();
+  } catch { /* The quote stream can continue while chart history is unavailable. */ }
+  finally { if (restoringDepth.get(session) === base) restoringDepth.delete(session); }
+}
 async function refreshLive(manual = false) {
-  if (!s?.live || quoteBusy) return;
+  if (!s?.live) return;
+  if (market.continuous) { await refreshBitcoinHistory(s, manual); return; }
+  if (quoteBusy) return;
   const instance = s,
     sourceBase = s.base;
   quoteBusy = true;
@@ -1598,11 +1819,15 @@ async function refreshLive(manual = false) {
       } catch {}
     }
 
-    const q = data?.quote || (await fetchMarketQuote(s.marketId, options));
     if (s !== instance || s.base !== sourceBase) return;
-    const result = applyBoardQuote(s, q);
-    if (result.changed && s.markHistory && s.markHistory.at(-1)?.time !== s.account.lastTime)
-      s.markHistory.push({ time: s.account.lastTime, price: s.account.lastPrice });
+    const q = data?.quote || (await fetchMarketQuote(instance.marketId, options));
+    if (s !== instance || s.base !== sourceBase) return;
+    lastQuoteCheck = Date.now();
+    liveTransport = 'polling';
+    const fresh = stockQuoteState(s, q) === 'fresh';
+    const result = fresh ? applyBoardQuote(s, q) : { changed:false, newFills:[] };
+    if (!fresh && q.time >= s.liveQuote.time) s.liveQuote = q;
+    recordLiveMark(s, result);
     if (data && q.time >= s.liveQuote.time) {
       s.customBars = data.bars;
       s.lastHistoryFetch = Date.now();
@@ -1623,11 +1848,13 @@ async function refreshLive(manual = false) {
     s.feed.tradeDate = s.liveQuote.tradeDate;
     refreshIssue = '';
     if (view === 'terminal') render();
-    else if (result.changed) setView(view);
+    else if (result.newFills.length && view === 'history') renderTradeHistory(elements('history'), sessions, s);
     if (result.changed || data) save();
     if (manual) notify('已核对' + quoteSource(s.marketId) + '报价 · ' + fmtTime(s.liveQuote.time, market.timeZone));
   } catch (err) {
     if (s === instance) {
+      liveTransport = 'offline';
+      renderLiveControls();
       refreshIssue = '报价更新失败，保留上次报价';
       if (view === 'terminal') renderPlay();
       if (manual) notify(err.message);
@@ -1696,6 +1923,8 @@ setInterval(() => {
     refreshWatch();
   }
 }, 15000);
+setInterval(() => { if (s?.live && !document.hidden) renderLiveControls(); }, 1000);
+window.addEventListener('offline', renderLiveControls);
 function show(title, html) {
   stop();
   elements('dialogTitle').textContent = title;
@@ -1730,6 +1959,7 @@ function context() {
   };
 }
 function submit() {
+  requireLiveQuote();
   const qty = Number(elements('qty').value);
   if (!market.quantityDecimals && (!Number.isSafeInteger(qty) || qty < 1))
     throw Error('请输入正整数交易数量');
@@ -1748,7 +1978,7 @@ function submit() {
   notify(
     result.status === 'filled'
       ? '已模拟成交 ' + formatQty(result.filledQty) + ' ' + unitName() + '，成交价 ' + number(result.fillPrice)
-      : '委托已提交，下一根 K 线起撮合',
+      : s.live ? '模拟委托已提交，按后续行情撮合' : '委托已提交，下一根 K 线起撮合',
   );
 }
 function editProtection() {
@@ -1764,6 +1994,7 @@ function editProtection() {
   elements('editProtection').onsubmit = (e) => {
     e.preventDefault();
     try {
+      requireLiveQuote();
       updateProtection(
         s.account,
         { takeProfit: elements('editTp').value || null, stopLoss: elements('editSl').value || null },
@@ -1799,15 +2030,18 @@ function action(key) {
     case 'random':
       randomPeriod();
       break;
+    case 'live':
+    case 'replay':
+      void openWorkspace(key === 'live');
+      break;
+    case 'retryWorkspace':
+      if (workspaceRequest) void openWorkspace(workspaceRequest.live, workspaceRequest.id);
+      break;
     case 'today':
-      if (s.live) refreshLive(true);
-      else
-        startFeed({
-          marketId: s.marketId,
-          kind: s.feed?.kind || defaultKind(s.marketId),
-          base: '5m',
-          live: true,
-        }).catch((err) => notify(err.message));
+      if (s.live) {
+        if (market.continuous) { startBitcoinStream(); void refreshLive(true); }
+        else void refreshLive(true);
+      } else void openWorkspace(true, s.marketId);
       break;
     case 'undoDraw': {
       if (drawingToolbar.options.locked) return notify('请先解锁画线');
@@ -1825,6 +2059,7 @@ function action(key) {
     case 'terminal':
     case 'history':
     case 'journal':
+      clearWorkspaceRequest();
       setView(key);
       break;
     case 'fit':
@@ -1853,6 +2088,7 @@ function action(key) {
       submit();
       break;
     case 'closePosition':
+      requireLiveQuote();
       const result = closePosition(s.account, markBar());
       render();
       save();
@@ -1866,10 +2102,19 @@ function action(key) {
 document.addEventListener('click', (event) => {
   const btn = event.target.closest('button,a.brand');
   if (!btn) return;
+  if (workspaceRequest && ['live', 'replay', 'retryWorkspace'].includes(btn.dataset.action)) {
+    action(btn.dataset.action);
+    return;
+  }
+  if (!s && workspaceRequest && ['history','journal'].includes(btn.dataset.action)) {
+    const target = btn.dataset.action;
+    void openWorkspace(false).then(() => { if (s && !workspaceRequest) setView(target); });
+    return;
+  }
   if (!s) {
     if (btn.dataset.action) {
       pendingInitialAction = btn.dataset.action;
-      elements('modeBadge').textContent = '正在打开历史训练…';
+      elements('modeBadge').textContent = '正在打开交易终端…';
     }
     return;
   }
@@ -1924,7 +2169,7 @@ elements('speed').addEventListener('change', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !dialog.open) {
     elements('chartPanel').classList.remove('expanded');
-    if (chart) chart.setTool('crosshair');
+    if (chart) chart.cancelDrawing();
   }
   if (
     !s ||
@@ -1952,14 +2197,29 @@ dialog.addEventListener('click', (e) => {
   if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stop();
-  else if (s) {
+  if (document.hidden) { stop(); if (s?.live) void save(); }
+  else if (workspaceRequest && !elements('workspaceNotice').querySelector('[data-action=retryWorkspace]').hidden) {
+    void openWorkspace(workspaceRequest.live, workspaceRequest.id);
+  } else if (s) {
+    renderLiveControls();
     refreshLive();
     refreshWatch();
   }
 });
 function initChart() {
   const quickDelete = elements('trendQuickDelete');
+  const swatches = [...elements('trendColors').querySelectorAll('[data-trend-color]')];
+  const colorKey = 'wavelab-trend-color';
+  let preferredColor = swatches[0].dataset.trendColor;
+  try {
+    const stored = localStorage.getItem(colorKey);
+    if (swatches.some(button => button.dataset.trendColor === stored)) preferredColor = stored;
+  } catch {}
+  function showColor(color) {
+    for (const button of swatches) {
+      button.setAttribute('aria-pressed', String(button.dataset.trendColor === color.toLowerCase()));
+    }
+  }
   drawingToolbar = createDrawingToolbar({
     rail: elements('drawingTools'), menu: elements('drawingMenu'),
     onTool: (id) => chart.setTool(id), onOption: (flags) => chart.setDrawingOptions(flags),
@@ -1988,13 +2248,10 @@ function initChart() {
     },
     onDrawingSelection: (style) => {
       elements('trendEditor').hidden = !style;
+      showColor(style?.color || preferredColor);
       if (!style) return;
       elements('trendPattern').value = style.pattern;
-      elements('trendColor').value = style.color;
       elements('trendWidth').value = String(style.width);
-      for (const button of all('[data-trend-color]')) {
-        button.setAttribute('aria-pressed', String(button.dataset.trendColor === style.color.toLowerCase()));
-      }
     },
     onDrawingChange: (drawings) => {
       if (s) {
@@ -2005,20 +2262,21 @@ function initChart() {
     },
     onToolChange: drawingToolbar.setTool,
   });
-  elements('trendEditor').addEventListener('click', (event) => {
+  chart.setDrawingOptions({ trendColor: preferredColor });
+  showColor(preferredColor);
+  elements('trendColors').addEventListener('click', (event) => {
     const swatch = event.target.closest('[data-trend-color]');
-    if (swatch) chart.setTrendStyle({ color: swatch.dataset.trendColor });
+    if (!swatch) return;
+    preferredColor = swatch.dataset.trendColor;
+    try { localStorage.setItem(colorKey, preferredColor); } catch {}
+    chart.setDrawingOptions({ trendColor: preferredColor });
+    chart.setTrendStyle({ color: preferredColor });
+    showColor(preferredColor);
   });
   elements('trendPattern').addEventListener('change', (e) => chart.setTrendStyle({ pattern: e.target.value }));
   elements('trendWidth').addEventListener('change', (event) => {
     chart.setTrendStyle({ width: Number(event.target.value) });
   });
-  elements('trendColor').addEventListener('input', (event) =>
-    chart.setTrendStyle({ color: event.target.value }),
-  );
-  elements('trendColor').addEventListener('change', (event) =>
-    chart.setTrendStyle({ color: event.target.value }),
-  );
   elements('deleteTrend').addEventListener('click', () => chart.deleteSelectedTrend());
   quickDelete.addEventListener('click', () => {
     if (chart.deleteSelectedTrend()) elements('plot').querySelector('[tabindex="0"]')?.focus({ preventScroll: true });
@@ -2048,29 +2306,20 @@ try {
   const oldLanding = untouched && !restored.historicalHome && (restored.live || restored.feed?.anchored ||
     (!restored.feed && !restored.customBars && !restored.periodSchema) ||
     (restored.feed?.archivePeriod?.year >= new Date().getFullYear()));
-  if (restored && !oldLanding) {
-    await activate(restored);
-    if (s.live) refreshLive();
-  } else {
-    elements('modeBadge').textContent = '正在打开往年历史训练…';
-    const id = restored?.marketId || 'csi1000';
-    try {
-      await startFeed({ marketId: id, kind: defaultKind(id), base: '5m',
-        live: false, archiveYear: 'auto' });
-    } catch (error) {
-      if (restored) await activate(restored);
-      else throw error;
-      notify('暂时无法打开历史训练，已恢复浏览器存档。');
-    }
-  }
-  if (pendingInitialAction) {
+  const wanted = initialViewHash;
+  if (wanted === '#live') await openWorkspace(true);
+  else if (wanted === '#bitcoin') await openWorkspace(false, 'btcPerp');
+  else if (wanted === '#replay') await openWorkspace(false);
+  else if (restored && !oldLanding) await activate(restored);
+  else if (['#history', '#journal', '#terminal'].includes(wanted) || oldLanding) await openWorkspace(false);
+  else await openWorkspace(true);
+  if (pendingInitialAction && s) {
     const actionToOpen = pendingInitialAction;
     pendingInitialAction = '';
     action(actionToOpen);
   }
-  refreshWatch();
-  if (initialViewHash === '#bitcoin') await switchMarket('btcPerp');
-  if (['#history', '#journal'].includes(initialViewHash)) setView(initialViewHash.slice(1));
+  if (s) refreshWatch();
+  if (s && ['#history', '#journal'].includes(initialViewHash)) setView(initialViewHash.slice(1));
 } catch (err) {
   elements('saved').textContent = '加载失败';
   notify('训练终端未能启动：' + err.message);

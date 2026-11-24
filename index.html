@@ -12,23 +12,28 @@
         }
       } catch {}
     </script>
-    <title>浪线 WaveLab · K 线训练终端</title>
-    <meta name="description" content="比特币现货、中证股指期货和全球指数的模拟交易与历史 K 线回放训练。" />
+    <title>浪线 WaveLab · 实时模拟交易与历史训练</title>
+    <meta name="description" content="查看比特币、股指期货与全球指数行情，使用模拟账户进行实时交易或历史 K 线回放训练。" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=20261124" />
+    <link rel="stylesheet" href="./style.css?v=20261124trend3" />
     <link rel="stylesheet" href="./journal.css?v=20261124" />
-    <link rel="stylesheet" href="./trade-history.css" />
+    <link rel="stylesheet" href="./trade-history.css?v=20261124trend3" />
   </head>
-  <body>
+  <body data-workspace="replay">
     <header class="mast">
       <div class="mast-inner">
-        <a class="brand" href="#terminal" aria-label="WaveLab 训练终端"
+        <a class="brand" href="#terminal" aria-label="WaveLab 交易终端"
           ><img src="./favicon.svg" alt="" /><span>Wave<span class="brand-light">Lab</span></span></a
         >
         <nav aria-label="主导航">
-          <button data-action="terminal" class="nav active"><i data-i="terminal"></i>训练终端</button
-          ><button data-action="history" class="nav"><i data-i="orders"></i>交易历史</button
-          ><button data-action="journal" class="nav"><i data-i="journal"></i>交易复盘</button>
+          <div class="workspace-switch" role="group" aria-label="选择交易模式">
+            <button type="button" data-action="live" class="nav"><i data-i="indicator"></i>实时交易</button>
+            <button type="button" data-action="replay" class="nav active" aria-current="page"><i data-i="rewind"></i>历史训练</button>
+          </div>
+          <div class="record-links" role="group" aria-label="交易记录">
+            <button type="button" data-action="history" class="nav">交易历史</button>
+            <button type="button" data-action="journal" class="nav">交易复盘</button>
+          </div>
         </nav>
         <div class="mast-actions">
           <button id="themeSwitch" class="quiet" aria-label="切换到浅色" title="切换到浅色">
@@ -43,11 +48,19 @@
     <main id="terminal">
       <div class="page-title">
         <div class="title-row">
-          <h1>训练终端</h1>
+          <h1 id="workspaceTitle">历史训练</h1>
           <div class="mode-badge" id="modeBadge"></div>
+          <span id="liveStatus" class="workspace-status" role="status"></span>
           <button data-action="today" id="todayBtn" class="today-btn">今日行情</button>
         </div>
       </div>
+      <section id="workspaceNotice" class="workspace-notice" hidden aria-labelledby="workspaceNoticeTitle">
+        <div class="notice-copy" aria-live="polite">
+          <h2 id="workspaceNoticeTitle"></h2>
+          <p id="workspaceNoticeText"></p>
+        </div>
+        <button type="button" data-action="retryWorkspace" class="primary"><i data-i="rewind"></i>重新连接</button>
+      </section>
       <section aria-label="市场选择">
         <div class="section-line">
           <h2>市场观察 <small class="watch-caption">最新报价</small></h2>
@@ -94,18 +107,17 @@
             </div>
           </div>
           <div class="pencil-row">
+            <div id="trendColors" class="trend-swatches" role="group" aria-label="趋势线颜色">
+              <span>线色</span>
+              <button type="button" data-trend-color="#41bf88" style="--swatch:#41bf88" aria-label="绿色" aria-pressed="true">绿</button>
+              <button type="button" data-trend-color="#ff5553" style="--swatch:#ff5553" aria-label="红色" aria-pressed="false">红</button>
+              <button type="button" data-trend-color="#ad7aff" style="--swatch:#ad7aff" aria-label="紫色" aria-pressed="false">紫</button>
+            </div>
             <button data-action="undoDraw" title="撤销上一条画线"><i data-i="rewind"></i>撤销上一条</button>
             <span id="drawingHint" aria-live="polite"></span><small id="drawingCount"></small>
           </div>
           <div id="trendEditor" class="trend-editor" role="group" aria-label="所选画线样式" hidden>
             <strong>画线样式</strong>
-            <div class="trend-swatches" role="group" aria-label="线条颜色">
-              <button type="button" data-trend-color="#ff5553" aria-label="红色" title="红色" style="--swatch:#ff5553"></button>
-              <button type="button" data-trend-color="#41bf88" aria-label="绿色" title="绿色" style="--swatch:#41bf88"></button>
-              <button type="button" data-trend-color="#589bff" aria-label="蓝色" title="蓝色" style="--swatch:#589bff"></button>
-              <button type="button" data-trend-color="#e9b84f" aria-label="金色" title="金色" style="--swatch:#e9b84f"></button>
-              <input id="trendColor" type="color" aria-label="自定义画线颜色" title="自定义颜色" />
-            </div>
             <label class="trend-width">粗细
               <select id="trendWidth" aria-label="画线粗细">
                 <option value="1">1 px</option><option value="2">2 px</option><option value="3">3 px</option><option value="4">4 px</option><option value="5">5 px</option>
@@ -264,6 +276,6 @@
       <div id="dialogBody"></div>
     </dialog>
     <div id="toast" aria-live="polite" role="status"></div>
-    <script type="module" src="./src/app.js?v=20261124"></script>
+    <script type="module" src="./src/app.js?v=20261124trend3"></script>
   </body>
 </html>
