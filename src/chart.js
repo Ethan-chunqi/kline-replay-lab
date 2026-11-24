@@ -171,7 +171,7 @@ export function createTradingChart(container, callbacks = {}) {
   let bars = [],
     rowIndex = new Map(),
     options = {};
-  let activeMarket, displayKey, levelsKey, lastPriceColor;
+  let activeMarket, displayKey, levelsKey, lastPriceColor, lastSource;
   let ready = false,
     destroyed = false,
     lastWidth = root.clientWidth;
@@ -331,12 +331,26 @@ export function createTradingChart(container, callbacks = {}) {
     });
     chart.priceScale('right', 0).setAutoScale(true);
   }
+  function showRange(firstIndex) {
+    if (!bars.length) return;
+    const count = bars.length - firstIndex;
+    const scale = chart.timeScale();
+    scale.applyOptions({minBarSpacing: Math.max(0.001, Math.min(1.5, scale.width() / (count + 5)))});
+    scale.setVisibleLogicalRange({from: Math.max(-0.5, firstIndex - 0.5), to: bars.length + 1});
+    chart.priceScale('right', 0).setAutoScale(true);
+  }
   function update(visibleBars, next = {}) {
     if (destroyed) return;
     options = { precision: 2, ...options, ...next };
     options.precision = Math.max(0, Math.min(8, Math.trunc(options.precision) || 0));
     const marketKey = [options.marketId, options.timeframe].join('|');
-    const oldLast = bars.at(-1);
+    const oldLast = bars.at(-1), oldCount = bars.length;
+    // Live price events only change the last candle or append to the same backing series.
+    // A historical refresh replaces the backing array and must update the entire chart.
+    const incremental = next.liveSeries && next.liveSeries === lastSource && oldLast && marketKey === activeMarket
+      && (visibleBars.length === oldCount || visibleBars.length === oldCount + 1)
+      && visibleBars[oldCount - 1]?.time === oldLast.time;
+    lastSource = next.liveSeries;
     const prevRange = chart.timeScale().getVisibleLogicalRange();
     const distanceFromEdge = prevRange ? bars.length - 1 - prevRange.to : 0;
     const changedMarket = activeMarket !== marketKey;
@@ -346,7 +360,9 @@ export function createTradingChart(container, callbacks = {}) {
     }
     ready = false;
     bars = visibleBars;
-    rowIndex = new Map(bars.map((bar, i) => [isoKey(bar.time), i]));
+    if (incremental) {
+      if (bars.length > oldCount) rowIndex.set(isoKey(bars.at(-1).time), bars.length - 1);
+    } else rowIndex = new Map(bars.map((bar, i) => [isoKey(bar.time), i]));
     const key = [options.precision, options.timeZone, typeof bars[0]?.time].join('|');
     if (displayKey !== key) {
       displayKey = key;
@@ -366,7 +382,11 @@ export function createTradingChart(container, callbacks = {}) {
       priceSeries.applyOptions({ priceLineColor: priceColor });
       lastPriceColor = priceColor;
     }
-    priceSeries.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+    const priceBar = ({time, open, high, low, close}) => ({time, open, high, low, close});
+    if (incremental) {
+      priceSeries.update(priceBar(bars[oldCount - 1]));
+      if (bars.length > oldCount) priceSeries.update(priceBar(latest));
+    } else priceSeries.setData(bars.map(priceBar));
     renderMarkers();
     displayLevels(options.levels);
     drawing.update(next.drawings, changedMarket);
@@ -374,7 +394,8 @@ export function createTradingChart(container, callbacks = {}) {
     else if (prevRange && bars.length) {
       const lastIndex = rowIndex.get(isoKey(oldLast.time));
       const advanced = lastIndex === undefined ? 0 : bars.length - 1 - lastIndex;
-      const shift = advanced > 0 && distanceFromEdge < 2 ? advanced : 0;
+      const prepended = lastIndex === undefined ? 0 : lastIndex - (oldCount - 1);
+      const shift = prepended + (advanced > 0 && distanceFromEdge < 2 ? advanced : 0);
       chart.timeScale().setVisibleLogicalRange({ from: prevRange.from + shift, to: prevRange.to + shift });
     }
     ready = true;
@@ -414,6 +435,7 @@ export function createTradingChart(container, callbacks = {}) {
   return {
     update,
     resetView,
+    showRange,
     zoom,
     setTool: drawing.setTool,
     cancelDrawing: drawing.cancelDrawing,

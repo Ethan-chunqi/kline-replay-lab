@@ -488,7 +488,7 @@ function fillsPanel(fills, market, displayTime) {
   return node;
 }
 
-function notesPanel(session, bar, onSave, displayTime) {
+function notesPanel(session, bar, onSave, displayTime, readOnly) {
   const { node, head } = section('复盘笔记');
   const total = el('span', 'jr-muted');
   head.append(total);
@@ -553,7 +553,8 @@ function notesPanel(session, bar, onSave, displayTime) {
       submit.disabled = !input.value.trim();
     }
   });
-  node.append(form, list);
+  if (!readOnly) node.append(form);
+  node.append(list);
   draw();
   return node;
 }
@@ -574,7 +575,7 @@ function archivePanel(archives, onRestore) {
       const details = el('span', 'jr-archive-detail');
       details.append(
         el('b', '', item.label || item.marketName || '训练存档'),
-        el('small', '', [item.marketName, dateLabel(item.date)].filter(Boolean).join(' · ')),
+        el('small', '', [item.marketName, dateLabel(item.date), item.readOnly ? '只读存档' : ''].filter(Boolean).join(' · ')),
       );
       const ret = el(
         'span',
@@ -600,7 +601,7 @@ function archivePanel(archives, onRestore) {
 
 export function renderJournal(
   container,
-  { session, market, bars = [], bar, onBack, onSave, onRestore, onRetry, archives = [] },
+  { session, market, bars = [], bar, onBack, onSave, onRestore, onRetry, archives = [], readOnly = false },
 ) {
   loadStyles();
   const account = session.account;
@@ -610,7 +611,7 @@ export function renderJournal(
   const root = el('div', 'jr-view');
   const header = el('header', 'jr-header');
   const title = el('div');
-  const marketInfo = [market.name, market.symbol].filter(Boolean).join(' · ');
+  const marketInfo = [market.name, market.symbol, readOnly ? '只读存档' : ''].filter(Boolean).join(' · ');
   title.append(
     el('h1', '', '交易复盘'),
     el('p', 'jr-muted', marketInfo + '　/　' + displayTime(bar?.time ?? account.lastTime) + (market.timeZone === 'UTC' ? ' UTC' : '')),
@@ -623,7 +624,7 @@ export function renderJournal(
     'export',
   );
   exportButton.disabled = !account.fills.length;
-  actions.append(btn('返回训练', 'jr-secondary', onBack, 'back'));
+  actions.append(btn(readOnly ? '返回当前训练' : '返回训练', 'jr-secondary', onBack, 'back'));
   if (typeof onRetry === 'function') actions.append(btn('重练本段', 'jr-secondary', onRetry, 'retry'));
   actions.append(exportButton);
   header.append(title, actions);
@@ -649,7 +650,7 @@ export function renderJournal(
     equityChart(account, bar, unit, displayTime, benchmark),
     directions(account.fills, unit),
     fillsPanel(account.fills, market, displayTime),
-    notesPanel(session, bar, onSave, displayTime),
+    notesPanel(session, bar, onSave, displayTime, readOnly),
   );
   root.append(header, metrics, layout, archivePanel(archives, onRestore));
   container.replaceChildren(root);

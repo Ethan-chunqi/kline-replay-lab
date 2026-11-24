@@ -107,26 +107,140 @@ export function liveBitcoinCandle(marketId, base, row, asOfMs, lastTradeId = nul
   return {marketId, base, bar: candle(row[0] / 1000, row.slice(1, 6), base), asOfMs, lastTradeId};
 }
 
-export async function loadBitcoinFeed(base, { signal, limit = 720, marketId = 'btc' } = {}) {
-  const product = products[marketId];
-  const interval = apiIntervals[base];
-  if (!interval) throw Error('币安不支持这个原始周期。');
-  const rows = await publicData(product, 'klines', { interval, limit: Math.min(1000, limit) }, signal);
+const dayMs = 86_400_000;
+const pageSize = 1000;
+// Cache only completed exchange time windows. Bound both markets' total cache
+// to 96,000 candles, enough to revisit two 20-day one-minute training charts.
+const closedPages = new Map();
+
+function barSeconds(bar) {
+  return typeof bar.time === 'number' ? bar.time : Date.parse(bar.time + 'T00:00:00Z') / 1000;
+}
+
+async function klinePage(product, base, intervalMs, params, signal) {
+  const rows = await publicData(product, 'klines', { interval: apiIntervals[base], ...params }, signal);
   if (!Array.isArray(rows) || !rows.length) throw Error(product.source + '未返回 K 线。');
-  const quote = await getBinanceQuote({ signal, marketId });
-  const bars = rows.filter((row) => row[0] <= quote.tradeTimeMs)
-    .map((row) => candle(row[0] / 1000, row.slice(1, 6), base));
+  let previous = -Infinity;
+  return rows.map((row) => {
+    const time = row[0];
+    if (!Number.isSafeInteger(time) || time % intervalMs !== 0 || time <= previous ||
+        time < (params.startTime ?? 0) || time > (params.endTime ?? Infinity))
+      throw Error(product.source + '返回了错误周期或时间范围的 K 线。');
+    previous = time;
+    return candle(time / 1000, row.slice(1, 6), base);
+  });
+}
+
+async function closedKlinePage(product, base, intervalMs, startTime, endTime, signal) {
+  const key = [product.archivePrefix, base, startTime, endTime].join('/');
+  let bars = closedPages.get(key);
+  if (bars) {
+    closedPages.delete(key);
+  } else {
+    bars = await klinePage(product, base, intervalMs, {startTime, endTime, limit: pageSize}, signal);
+  }
+  // Only complete immutable pages are reused. A provider gap stays visible
+  // and can be repaired by a subsequent successful response from the exchange.
+  if (bars.length === (endTime + 1 - startTime) / intervalMs) {
+    closedPages.set(key, bars);
+    if (closedPages.size > 96) closedPages.delete(closedPages.keys().next().value);
+  }
+  return bars;
+}
+
+async function intradayDepth(product, base, intervalMs, tradeDays, signal) {
+  const now = Date.now();
+  const first = Math.floor(now / dayMs) * dayMs - tradeDays * dayMs;
+  // Epoch-aligned page boundaries keep historical pages reusable as the UTC
+  // day rolls over. Read independent windows concurrently with a small cap.
+  const span = intervalMs * pageSize;
+  let tailStart = Math.max(first, Math.floor(now / span) * span);
+  const windows = [];
+  for (let from = first; from < tailStart;) {
+    const until = (Math.floor(from / span) + 1) * span;
+    windows.push([from, until - 1]);
+    from = until;
+  }
+  const controller = new AbortController();
+  const scopedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  const pages = new Array(windows.length);
+  let index = 0;
+  async function loadPages() {
+    while (index < windows.length) {
+      scopedSignal.throwIfAborted();
+      const at = index++;
+      const [startTime, endTime] = windows[at];
+      pages[at] = await closedKlinePage(product, base, intervalMs, startTime, endTime, scopedSignal);
+    }
+  }
+  try {
+    await Promise.all(Array.from({length: Math.min(4, windows.length)}, loadPages));
+    // Read the newest window last so a slow history download cannot make the
+    // executable mark stale. Handle crossing a page boundary during download.
+    while (Date.now() >= (Math.floor(tailStart / span) + 1) * span) {
+      const end = (Math.floor(tailStart / span) + 1) * span;
+      pages.push(await closedKlinePage(product, base, intervalMs, tailStart, end - 1, scopedSignal));
+      tailStart = end;
+    }
+    pages.push(await klinePage(product, base, intervalMs, {startTime: tailStart, limit: pageSize}, scopedSignal));
+    // Sessions own mutable chart bars. Keep cache entries independent from edits
+    // while a different account or chart interval is using the same source.
+    return pages.flatMap((page) => page.map((bar) => ({...bar})));
+  } finally {
+    controller.abort();
+  }
+}
+
+function bitcoinDepth(bars, intervalMs, requestedDays, quote) {
+  const mid = Date.parse(quote.tradeDate + 'T00:00:00Z');
+  const first = mid - requestedDays * dayMs;
+  const counts = new Map();
+  let barCount = 0;
+  for (const bar of bars) {
+    const time = barSeconds(bar) * 1000;
+    if (time < first || time > quote.tradeTimeMs) continue;
+    const date = Math.floor(time / dayMs) * dayMs;
+    counts.set(date, (counts.get(date) || 0) + 1);
+    barCount++;
+  }
+  let completeDays = 0;
+  for (let day = first; day < mid; day += dayMs) {
+    if (counts.get(day) === dayMs / intervalMs) completeDays++;
+  }
+  const todayBars = counts.get(mid) || 0;
+  const expectedToday = Math.floor((quote.tradeTimeMs - mid) / intervalMs) + 1;
+  return {
+    requestedDays, completeDays, complete: completeDays === requestedDays && todayBars === expectedToday,
+    firstDate: counts.size ? utcDate(counts.keys().next().value / 1000) : null,
+    lastDate: utcDate(barSeconds(bars.at(-1))), quoteDate: quote.tradeDate, todayBars, barCount,
+  };
+}
+
+export async function loadBitcoinFeed(base, { signal, limit = 720, marketId = 'btc', tradeDays = 0 } = {}) {
+  const product = products[marketId];
+  if (!product || !apiIntervals[base]) throw Error('币安不支持这个市场或原始周期。');
+  if (!Number.isInteger(tradeDays) || tradeDays < 0 || tradeDays >= pageSize)
+    throw Error('比特币行情天数无效。');
   const minutes = base.endsWith('m') ? parseInt(base) : base.endsWith('H') ? parseInt(base) * 60 : 1440;
   const bucketSeconds = minutes * 60;
+  const intervalMs = bucketSeconds * 1000;
+  const history = tradeDays && base !== '1D'
+    ? await intradayDepth(product, base, intervalMs, tradeDays, signal)
+    : await klinePage(product, base, intervalMs, {limit: Math.min(pageSize, Math.max(limit, tradeDays + 1))}, signal);
+  const quote = await getBinanceQuote({ signal, marketId });
+  const from = tradeDays && base !== '1D' ? Date.parse(quote.tradeDate + 'T00:00:00Z') - tradeDays * dayMs : 0;
+  const bars = history.filter((bar) => {
+    const time = barSeconds(bar) * 1000;
+    return time >= from && time <= quote.tradeTimeMs;
+  });
   const start = Math.floor(quote.time / bucketSeconds) * bucketSeconds;
   const latest = bars.at(-1);
-  const latestStart = typeof latest?.time === 'number' ? latest.time : Date.parse(latest?.time) / 1000;
+  const latestStart = latest ? barSeconds(latest) : NaN;
   if (!Number.isFinite(latestStart) || start - latestStart > bucketSeconds || latestStart > start)
     throw Error(product.source + '的 K 线与当前成交时间不匹配。');
   if (latestStart === start) {
-    latest.high = Math.max(latest.high, quote.price);
-    latest.low = Math.min(latest.low, quote.price);
-    latest.close = quote.price;
+    bars[bars.length - 1] = { ...latest, high: Math.max(latest.high, quote.price),
+      low: Math.min(latest.low, quote.price), close: quote.price };
   } else {
     bars.push({time: base === '1D' ? utcDate(start) : start, open: quote.price, high: quote.price,
       low: quote.price, close: quote.price, volume: 0});
@@ -134,5 +248,6 @@ export async function loadBitcoinFeed(base, { signal, limit = 720, marketId = 'b
   return {
     bars, base, symbol, name: product.name, quote, asOf: quote.time, tradeDate: quote.tradeDate,
     quoteUrl: product.reference, sourceUrl: product.reference, historySource: product.source, contract: null,
+    ...(tradeDays ? {depth: bitcoinDepth(bars, intervalMs, tradeDays, quote)} : {}),
   };
 }
