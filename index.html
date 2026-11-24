@@ -13,10 +13,11 @@
       } catch {}
     </script>
     <title>浪线 WaveLab · K 线训练终端</title>
-    <meta name="description" content="中证、纳指等六大指数模拟交易与历史K线回放训练。" />
+    <meta name="description" content="比特币现货、中证股指期货和全球指数的模拟交易与历史 K 线回放训练。" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=20261120b" />
+    <link rel="stylesheet" href="./style.css?v=20261124" />
     <link rel="stylesheet" href="./journal.css" />
+    <link rel="stylesheet" href="./trade-history.css" />
   </head>
   <body>
     <header class="mast">
@@ -26,6 +27,7 @@
         >
         <nav aria-label="主导航">
           <button data-action="terminal" class="nav active"><i data-i="terminal"></i>训练终端</button
+          ><button data-action="history" class="nav"><i data-i="orders"></i>交易历史</button
           ><button data-action="journal" class="nav"><i data-i="journal"></i>交易复盘</button>
         </nav>
         <div class="mast-actions">
@@ -83,54 +85,36 @@
             <span class="chart-convention"><span class="mouse-guide">滚轮缩放 · 右键拖动　</span>红涨 · 绿跌</span>
           </div>
           <div class="plot-body">
-            <div class="draw-tools">
-              <button
-                class="tool icon-only active"
-                data-tool="crosshair"
-                title="十字光标"
-                aria-label="十字光标"
-              >
-                <i data-i="cross"></i></button
-              ><button class="tool icon-only" data-tool="trend" title="绘制趋势线" aria-label="绘制趋势线">
-                <i data-i="trend"></i></button
-              ><button
-                class="tool icon-only"
-                data-tool="horizontal"
-                title="绘制水平线"
-                aria-label="绘制水平线"
-              >
-                <i data-i="hline"></i></button
-              ><span></span
-              ><button class="tool icon-only" data-action="clearDraw" title="清除画线" aria-label="清除画线">
-                <i data-i="trash"></i>
-              </button>
-            </div>
+            <div class="draw-tools" id="drawingTools" role="group" aria-label="图表绘图工具"></div>
+            <div id="drawingMenu" class="drawing-menu" role="menu" hidden></div>
             <div id="plot">
-              <button type="button" id="trendQuickDelete" class="trend-quick-delete" title="删除这条趋势线（Delete）" hidden>
+              <button type="button" id="trendQuickDelete" class="trend-quick-delete" title="删除这条画线（Delete）" hidden>
                 <i data-i="trash" aria-hidden="true"></i>删除
               </button>
             </div>
           </div>
           <div class="pencil-row">
-            <span>画线</span><button data-tool="trend"><i data-i="trend"></i>趋势线</button
-            ><button data-tool="horizontal"><i data-i="hline"></i>水平线</button
-            ><button data-action="undoDraw">撤销上一条</button><small id="drawingCount"></small>
+            <button data-action="undoDraw" title="撤销上一条画线"><i data-i="rewind"></i>撤销上一条</button>
+            <span id="drawingHint" aria-live="polite"></span><small id="drawingCount"></small>
           </div>
-          <div id="trendEditor" class="trend-editor" role="group" aria-label="所选趋势线样式" hidden>
-            <strong>所选趋势线</strong>
+          <div id="trendEditor" class="trend-editor" role="group" aria-label="所选画线样式" hidden>
+            <strong>画线样式</strong>
             <div class="trend-swatches" role="group" aria-label="线条颜色">
               <button type="button" data-trend-color="#ff5553" aria-label="红色" title="红色" style="--swatch:#ff5553"></button>
               <button type="button" data-trend-color="#41bf88" aria-label="绿色" title="绿色" style="--swatch:#41bf88"></button>
               <button type="button" data-trend-color="#589bff" aria-label="蓝色" title="蓝色" style="--swatch:#589bff"></button>
               <button type="button" data-trend-color="#e9b84f" aria-label="金色" title="金色" style="--swatch:#e9b84f"></button>
-              <input id="trendColor" type="color" aria-label="自定义趋势线颜色" title="自定义颜色" />
+              <input id="trendColor" type="color" aria-label="自定义画线颜色" title="自定义颜色" />
             </div>
             <label class="trend-width">粗细
-              <select id="trendWidth" aria-label="趋势线粗细">
+              <select id="trendWidth" aria-label="画线粗细">
                 <option value="1">1 px</option><option value="2">2 px</option><option value="3">3 px</option><option value="4">4 px</option><option value="5">5 px</option>
               </select>
             </label>
-            <button type="button" id="deleteTrend" class="tool icon-only" aria-label="删除选中趋势线" title="删除此线"><i data-i="trash"></i></button>
+            <label class="trend-width">线型
+              <select id="trendPattern" aria-label="线型"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select>
+            </label>
+            <button type="button" id="deleteTrend" class="tool icon-only" aria-label="删除选中画线" title="删除此线"><i data-i="trash"></i></button>
           </div>
           <div class="replay">
             <div class="play-group">
@@ -197,6 +181,9 @@
               </dl>
               <div id="contractTermsNote" class="contract-terms"></div>
             </section>
+            <label class="field" id="perpLeverageField" hidden><span>全仓杠杆</span>
+              <select id="perpLeverage" aria-label="BTC 永续合约杠杆"></select>
+            </label>
             <div class="sides">
               <button id="buy" data-side="buy">买入 / 做多</button
               ><button id="sell" data-side="sell">卖出 / 做空</button>
@@ -255,11 +242,12 @@
       <section class="panel ledger">
         <div class="ledger-top">
           <div id="ledgerTabs"></div>
-          <button class="text-button" data-action="journal">查看复盘 <i data-i="journal"></i></button>
+          <button class="text-button" data-action="history">交易历史 <i data-i="orders"></i></button>
         </div>
         <div id="ledgerBody"></div>
       </section>
     </main>
+    <main id="history" hidden></main>
     <main id="journal" hidden></main>
     <footer>
       <span><i data-i="lock"></i><span id="saved">训练记录保存在此浏览器</span></span
@@ -275,6 +263,6 @@
       <div id="dialogBody"></div>
     </dialog>
     <div id="toast" aria-live="polite" role="status"></div>
-    <script type="module" src="./src/app.js?v=20261120c"></script>
+    <script type="module" src="./src/app.js?v=20261124"></script>
   </body>
 </html>

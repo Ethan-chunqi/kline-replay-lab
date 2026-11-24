@@ -275,7 +275,7 @@ h1 {
 }
 .watchlist {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -1935,4 +1935,64 @@ html[data-theme='dark'] #toast {
 }
 @media (hover: none), (max-width: 900px) {
   .mouse-guide { display: none; }
+}
+
+.plot-body { position: relative; }
+.plot-body .draw-tools {
+  display: flex;
+  width: 47px;
+  gap: 1px;
+  padding: 3px 1px 4px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.draw-tools .draw-main {
+  width: 34px;
+  height: 28px;
+  min-height: 28px;
+  flex-shrink: 0;
+  padding: 4px 6px;
+  color: var(--muted);
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+}
+.draw-tools .draw-main svg { width: 19px; height: 19px; }
+.draw-tools .draw-main[aria-pressed='true'] { background: var(--accent-soft, #ddf3eb); color: var(--accent, #12776b); }
+.draw-tools .draw-separator { display: block; min-height: 1px; width: 24px; margin: 3px 0; }
+.draw-family { display: flex; position: relative; flex: none; width: 100%; align-items: center; }
+.draw-family .draw-main { width: 29px; padding-right: 1px; }
+.draw-more { width: 14px; height: 28px; display: grid; place-content: center; color: var(--muted); padding: 0; }
+.draw-more svg { width: 12px; height: 12px; transform: rotate(-90deg); }
+.draw-more:hover, .draw-more[aria-expanded='true'] { color: var(--ink); background: var(--surface2); }
+.drawing-menu {
+  position: absolute;
+  left: 49px;
+  z-index: 7;
+  overflow-y: auto;
+  width: 168px;
+  max-height: calc(100% - 6px);
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 25%);
+  scrollbar-width: thin;
+}
+.drawing-menu button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; color: inherit; text-align: left; font-size: 13px; }
+.drawing-menu button span { flex: 1; }
+.drawing-menu button:hover, .drawing-menu button:focus-visible { background: var(--surface2); }
+.drawing-menu button[aria-checked='true'] { color: var(--accent, #12776b); }
+#drawingHint { font-size: 12px; }
+@media (max-width: 620px) {
+  .plot-body .draw-tools { width: 42px; }
+  .draw-family .draw-main { width: 26px; }
+  .drawing-menu { left: 44px; }
+  .mast-inner { flex-wrap: wrap; }
+  .mast nav { order: 3; width: 100%; justify-content: space-around; height: 36px; }
+  .mast .nav { flex: 1; padding: 4px 7px; font-size: 13px; }
+  .mast-actions { margin-left: auto; }
 }
