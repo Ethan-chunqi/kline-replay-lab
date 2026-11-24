@@ -1,7 +1,7 @@
 // Equity and index execution marks come from Eastmoney. A historical
 // replay can run entirely from verified candles for the requested instrument.
 import { fetchEastmoneyBars, fetchEastmoneyQuote } from './eastmoney.js';
-import { getBinanceQuote, loadBitcoinFeed } from './binance-history.js';
+import { getBinanceQuote, loadBitcoinFeed } from './binance-history.js?v=20261124live';
 import { fetchSecondaryHistory } from './secondary-history.js';
 import { fetchIndexHistory } from './index-history.js';
 import { MARKETS } from './market.js?v=20261124';
