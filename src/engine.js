@@ -50,12 +50,36 @@ function contractTerms(contract) {
   };
 }
 
+export function defaultCapital(marketId) {
+  return marketId === 'btcPerp' || marketId === 'btc' ? 10_000 : DEFAULT_INITIAL_CASH;
+}
+
+// Linear, cross-margin USDT practice contract. Maintenance uses a fixed training rate.
+export function bitcoinPerpTerms(leverage = 1) {
+  if (!Number.isInteger(leverage) || leverage < 1 || leverage > 100)
+    throw new Error('请选择 1 至 100 之间的整数杠杆倍数');
+  return {
+    symbol: 'BTCUSDT', perpetual: true, leverage, multiplier: 1,
+    quantityDecimals: 3, tickSize: 0.1, marginRate: 1 / leverage, maintenanceRate: 0.004,
+  };
+}
+
+export function setPerpLeverage(account, leverage, mark) {
+  if (!account.contract?.perpetual) throw new Error('当前账户没有永续合约');
+  const terms = bitcoinPerpTerms(leverage);
+  const snap = getSnapshot(account, mark);
+  if (snap.notional * terms.marginRate > snap.equity + EPSILON)
+    throw new Error('可用保证金不足以调低杠杆，请先减少持仓');
+  account.contract = terms;
+}
+
 export function createAccount({
   initialCash = DEFAULT_INITIAL_CASH,
   feeBps = 3,
   slippageBps = 2,
   allowShort = true,
   contract = null,
+  spotRules = null,
 } = {}) {
   const capital = positive(initialCash, '初始资金');
   return {
@@ -63,7 +87,8 @@ export function createAccount({
     cash: capital,
     feeBps: basisPoints(feeBps),
     slippageBps: basisPoints(slippageBps),
-    allowShort: Boolean(allowShort),
+    allowShort: spotRules ? false : Boolean(allowShort),
+    ...(spotRules ? {spotRules} : {}),
     ...(contract == null ? {} : { contract: contractTerms(contract) }),
     position: emptyPosition(),
     orders: [],
@@ -166,8 +191,8 @@ function tickCount(price, tick) {
 }
 
 function validateTicks(account, fields) {
-  if (!account.contract) return;
-  const tick = account.contract.tickSize ?? 0.2;
+  const tick = account.contract ? account.contract.tickSize ?? 0.2 : account.spotRules?.tickSize;
+  if (!tick) return;
   for (const [key, label] of [
     ['price', '委托价'],
     ['limitPrice', '限价'],
@@ -175,15 +200,15 @@ function validateTicks(account, fields) {
     ['takeProfit', '止盈价'],
   ]) {
     if (fields[key] != null && !Number.isInteger(tickCount(fields[key], tick)))
-      throw new Error(label + '须为最小价格变动 ' + tick + ' 点的整数倍');
+      throw new Error(label + '须为最小价格变动 ' + tick + ' 的整数倍');
   }
 }
 
 function executionPrice(account, order, marketPrice) {
   const sign = order.side === 'buy' ? 1 : -1;
   let slipped = marketPrice * (1 + (sign * account.slippageBps) / 10000);
-  if (account.contract) {
-    const tick = account.contract.tickSize ?? 0.2;
+  const tick = account.contract ? account.contract.tickSize ?? 0.2 : account.spotRules?.tickSize;
+  if (tick) {
     const ticks = tickCount(slipped, tick);
     const rounded = order.side === 'buy' ? Math.ceil(ticks) : Math.floor(ticks);
     slipped = Number((Math.max(1, rounded) * tick).toPrecision(15));
@@ -191,6 +216,19 @@ function executionPrice(account, order, marketPrice) {
   const limit = order.type === 'stopLimit' ? order.limitPrice : order.type === 'limit' ? order.price : null;
   if (limit === null) return slipped;
   return order.side === 'buy' ? Math.min(slipped, limit) : Math.max(slipped, limit);
+}
+
+// Same-direction opening capacity at the ticket's reference price.
+export function bitcoinOpeningCapacity(account, order, mark) {
+  if (!Number.isFinite(mark) || mark <= 0) return 0;
+  const execution = executionPrice(account, order, mark);
+  const feePerBtc = execution * account.feeBps / 10000;
+  if (!account.contract)
+    return order.side === 'buy' ? account.cash / (execution + feePerBtc) : 0;
+  const slippageCost = (order.side === 'buy' ? 1 : -1) * (execution - mark);
+  const cost = mark * account.contract.marginRate + slippageCost + feePerBtc;
+  const free = marked(account, mark).available;
+  return Math.min(free / cost, feePerBtc ? account.cash / feePerBtc : Infinity);
 }
 
 function quote(account, order, price, mark = price) {
@@ -201,7 +239,10 @@ function quote(account, order, price, mark = price) {
   const closedQty = oldQty * sign < 0 ? Math.min(Math.abs(oldQty), qty) : 0;
   const openedQty = qty - closedQty;
   const remainder = oldQty + sign * qty;
-  const nextQty = Math.abs(remainder) <= Number.EPSILON * Math.max(Math.abs(oldQty), qty) * 4 ? 0 : remainder;
+  const quantityDecimals = account.contract?.quantityDecimals ?? account.spotRules?.quantityDecimals;
+  const nextQty = quantityDecimals != null
+    ? Number(remainder.toFixed(quantityDecimals))
+    : Math.abs(remainder) <= Number.EPSILON * Math.max(Math.abs(oldQty), qty) * 4 ? 0 : remainder;
   const multiplier = account.contract?.multiplier ?? 1;
   const notional = qty * price * multiplier;
   const fee = (notional * account.feeBps) / 10000;
@@ -266,6 +307,7 @@ function execute(account, order, marketPrice, time) {
   const fill = {
     id: account.fills.length + 1,
     orderId: order.id,
+    recordedAt: Date.now(),
     time,
     side: order.side,
     qty,
@@ -408,7 +450,12 @@ export function placeOrder(account, input, bar) {
   if (!['buy', 'sell'].includes(side) || !['market', 'limit', 'stop', 'stopLimit'].includes(type))
     throw new Error('委托方向或类型无效');
   const qty = positive(input.qty, '委托数量');
-  if (account.contract && !Number.isSafeInteger(qty)) throw new Error('期货委托手数须为正整数');
+  const decimals = account.contract?.quantityDecimals ?? account.spotRules?.quantityDecimals;
+  if (decimals != null) {
+    const step = 1 / 10 ** decimals;
+    if (!Number.isSafeInteger(tickCount(qty, step)) || qty < step)
+      throw new Error('数量须为 ' + step + ' BTC 的正整数倍');
+  } else if (account.contract && !Number.isSafeInteger(qty)) throw new Error('期货委托手数须为正整数');
   const price = type === 'market' ? null : positive(input.price, '触发价格');
   const fields = {
     side,

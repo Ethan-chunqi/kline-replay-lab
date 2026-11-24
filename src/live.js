@@ -1,6 +1,6 @@
 // Quote samples drive execution. Source candles and day-to-date extremes are display data only.
-import { advanceBar } from './engine.js';
-import { MARKETS } from './market.js';
+import { advanceBar } from './engine.js?v=20261124';
+import { MARKETS } from './market.js?v=20261124';
 
 const clocks = new Map();
 const sessions = {
@@ -91,7 +91,7 @@ function marketClock(session, quote) {
   const zone = session.timeZone || session.market?.timeZone || market?.timeZone || 'Asia/Shanghai';
   const clock = localClock(quote.time, zone);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(quote.tradeDate || '') ? quote.tradeDate : clock.day;
-  return { ...clock, date, windows: sessions[zone] || [[0, 1440]] };
+  return { ...clock, date, continuous: market?.continuous, windows: sessions[zone] || [[0, 1440]] };
 }
 
 function sourcePeriod(session) {
@@ -105,7 +105,7 @@ function sourcePeriod(session) {
 function bucketAt(time, clock, duration) {
   if (clock.day !== clock.date) return null;
   const weekday = new Date(clock.day + 'T00:00:00Z').getUTCDay();
-  if (weekday === 0 || weekday === 6) return null;
+  if (!clock.continuous && (weekday === 0 || weekday === 6)) return null;
   const localMidnight = time - clock.second;
   let previous = null;
   for (const [open, close] of clock.windows) {

@@ -1,13 +1,16 @@
-import { MARKETS, generateBars } from './market.js';
+import { MARKETS, generateBars } from './market.js?v=20261124';
 import { timeframeOptions, periodBars, executionTime, nextDisplayCursor } from './periods.js?v=20261120b';
 import { anchoredScenario, SNAPSHOT_QUOTES } from './anchor.js';
 import { pickRandomStart, visitedBarRanges } from './random-period.js?v=20261120b';
-import { replayCatalog, readHistoricalPeriod } from './replay-library.js';
-import { loadChartFeed } from './feed-service.js';
-import { fetchEastmoneyQuote, futuresTerms } from './eastmoney.js';
-import { tradingBar, applyLiveQuote } from './live.js';
+import { replayCatalog, readHistoricalPeriod } from './replay-library.js?v=20261124';
+import { fetchMarketQuote, loadChartFeed } from './feed-service.js?v=20261124';
+import { futuresTerms } from './eastmoney.js';
+import { tradingBar, applyLiveQuote } from './live.js?v=20261124';
 import {
-  DEFAULT_INITIAL_CASH,
+  bitcoinPerpTerms,
+  bitcoinOpeningCapacity,
+  defaultCapital,
+  setPerpLeverage,
   createAccount,
   getSnapshot,
   advanceBar,
@@ -15,12 +18,15 @@ import {
   cancelOrder,
   closePosition,
   updateProtection,
-} from './engine.js?v=20261120c';
-import { createTradingChart } from './chart.js';
-import { renderJournal } from './journal.js';
-import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261120c';
+} from './engine.js?v=20261124';
+import { createTradingChart } from './chart.js?v=20261124';
+import { renderJournal } from './journal.js?v=20261124';
+import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261124';
 import { openStorage } from './storage.js';
-import { icon } from './icons.js';
+import { icon } from './icons.js?v=20261124';
+import { createDrawingToolbar } from './drawing-toolbar.js';
+import { renderExposure } from './exposure-display.js';
+import { renderTradeHistory } from './trade-history-view.js';
 
 const $ = (selector) => document.querySelector(selector);
 const elements = (id) => document.getElementById(id);
@@ -53,6 +59,7 @@ const ordersText = { market: '市价', limit: '限价', stop: '停止', stopLimi
 const orderStatus = { pending: '待成交', filled: '已成交', cancelled: '已撤单', rejected: '已拒绝' };
 const seedNumber = () => crypto.getRandomValues(new Uint32Array(1))[0];
 const sessions = new Map();
+const initialViewHash = location.hash;
 let pendingInitialAction = '';
 let activeDays = [];
 let s,
@@ -68,6 +75,7 @@ let s,
   timer = null,
   view = 'terminal',
   cleanJournal,
+  drawingToolbar,
   toastTimer,
   saveVersion = 0,
   loadVersion = 0,
@@ -82,7 +90,10 @@ const watch = new Map(
   Object.entries(SNAPSHOT_QUOTES).map(([id, quote]) => [id, { quote: quote.future || quote, pinned: true }]),
 );
 const markBar = () => tradingBar(s, bars[s.cursor]);
-const unitName = () => (s.account.contract ? '手' : '单位');
+const unitName = () => market.quantityUnit || (s.account.contract ? '手' : '单位');
+const formatQty = (value) => market.quantityDecimals ? number(value, market.quantityDecimals) : String(value);
+const quoteSource = (id) => byId(id)?.continuous ? '币安' : '东方财富';
+const defaultKind = (id) => domestic(id) || id === 'btcPerp' ? 'future' : 'spot';
 const baseIDs = ['1m', '3m', '5m', '10m', '15m', '30m', '1H', '2H', '4H', '1D', '1W', '1M', '1Q', '1Y'];
 const baseNames = [
   '1分',
@@ -101,6 +112,8 @@ const baseNames = [
   '年线',
 ];
 for (const i of all('[data-i]')) i.innerHTML = icon(i.dataset.i);
+const leverageSelect = elements('perpLeverage');
+for (let n = 1; n <= 100; n++) leverageSelect.add(new Option(n + '×', String(n)));
 const themeSwitch = elements('themeSwitch');
 function updateThemeButton() {
   const dark = document.documentElement.dataset.theme === 'dark';
@@ -216,7 +229,15 @@ function makeSession(config = {}) {
     simulationReference: config.simulationReference,
   });
   const start = config.live ? series.length - 1 : Math.max(0, Math.min(startIndex, series.length - 2));
-  const account = createAccount(config);
+  const instrument = byId(marketId);
+  const spotRules = marketId === 'btc' ? {
+    unit: instrument.quantityUnit, quantityDecimals: instrument.quantityDecimals, tickSize: 1 / 10 ** instrument.precision,
+  } : null;
+  const contract = marketId === 'btcPerp' ? bitcoinPerpTerms(config.contract?.leverage) : config.contract;
+  const account = createAccount({
+    ...config, initialCash: config.initialCash ?? defaultCapital(marketId),
+    contract, spotRules, allowShort: marketId === 'btcPerp' ? true : config.allowShort,
+  });
   if (!config.live) advanceBar(account, series[start]);
   const created = {
     id: crypto.randomUUID(),
@@ -227,14 +248,14 @@ function makeSession(config = {}) {
     cursor: start,
     customBars,
     customName,
-    instrumentKind: config.kind || config.feed?.kind || (config.contract ? 'future' : 'spot'),
+    instrumentKind: config.kind || config.feed?.kind || (contract ? 'future' : 'spot'),
     simulationReference: config.simulationReference,
     account,
     notes: [],
     period: config.period || 'BASE',
     periodSchema: 2,
     historicalHome: true,
-    customCapital: config.customCapital ?? (account.initialCash !== DEFAULT_INITIAL_CASH),
+    customCapital: config.customCapital ?? (account.initialCash !== defaultCapital(marketId)),
     feed: config.feed || null,
     live: !!config.live,
     scenarioId: config.scenarioId || crypto.randomUUID(),
@@ -258,14 +279,14 @@ function displayMarket(session = s) {
       ...profile,
       name: session.feed.name,
       symbol: session.feed.symbol,
-      exchange: session.account.contract ? 'CFFEX' : profile.exchange,
+      exchange: domestic(session.marketId) && session.account.contract ? 'CFFEX' : profile.exchange,
     };
   if (session.account.contract) {
     return {
       ...profile,
-      exchange: 'CFFEX',
+      exchange: domestic(session.marketId) ? 'CFFEX' : profile.exchange,
       symbol: session.account.contract.symbol,
-      name: session.customName || profile.name + ' 股指期货模拟',
+      name: session.customName || (domestic(session.marketId) ? profile.name + ' 股指期货模拟' : profile.name),
     };
   }
   return session.customBars ? { ...profile, name: session.customName || '自选行情', symbol: 'CSV' } : profile;
@@ -300,7 +321,11 @@ function activate(next) {
   side = 'buy';
   tab = 'position';
   elements('orderType').value = 'market';
-  elements('qty').value = '1';
+  const quantity = elements('qty');
+  const quantityStep = 1 / 10 ** (market.quantityDecimals || 0);
+  quantity.step = quantity.min = String(quantityStep);
+  quantity.inputMode = market.quantityDecimals ? 'decimal' : 'numeric';
+  quantity.value = market.quantityDecimals ? (0.01).toFixed(market.quantityDecimals) : '1';
   elements('tp').value = '';
   elements('sl').value = '';
   elements('protection').open = false;
@@ -326,7 +351,7 @@ async function switchMarket(id, requestedPeriod) {
     }
     marketLoad = null;
   }
-  const kind = domestic(id) ? 'future' : 'spot';
+  const kind = defaultKind(id);
   const live = s.live;
   const year = live ? 'auto' : selectedArchiveYear();
   const mainSymbol = kind === 'future' ? watch.get(id)?.quote?.symbol : null;
@@ -423,8 +448,8 @@ function spark(values, n, id) {
 }
 const cardRanges = new Map();
 function historicalCard(id, active) {
-  const kind = domestic(id) ? 'future' : 'spot';
-  const symbol = kind === 'future' ? futuresTerms(id).symbol : byId(id).symbol;
+  const kind = defaultKind(id);
+  const symbol = domestic(id) ? futuresTerms(id).symbol : byId(id).symbol;
   if (active) {
     const current = bars[s.cursor], previous = bars[s.cursor - 1];
     return {
@@ -446,10 +471,10 @@ function historicalCard(id, active) {
   return cardRanges.get(key);
 }
 function renderMarkets() {
-  const ids = ['csi1000', 'csi500', 'ndx', 'csi300'];
+  const ids = ['csi1000', 'csi500', 'btcPerp', 'ndx', 'csi300'];
   const pending = marketLoad?.origin === s ? marketLoad : null;
   const activeId = pending?.id || s.marketId;
-  if (!ids.includes(activeId)) ids[3] = activeId;
+  if (!ids.includes(activeId)) ids[ids.length - 1] = activeId;
   const container = elements('watchlist');
   const historical = !!s.feed && !s.live && !s.feed.anchored;
   $('.watch-caption').textContent = historical ? '历史回放' : '最新报价';
@@ -467,8 +492,8 @@ function renderMarkets() {
     const stamp = loading ? '正在切换到' + humanName(m.name) + '…' : history ? history.stamp : quote
       ? quote.tradeDate +
         (domestic(id) ? ' · ' + quote.symbol + (item.pinned ? ' 收盘快照' : ' · 东方财富') :
-          item.pinned ? ' · 收盘快照' : item.dailySource ? ' · 日线 ' + item.dailySource : ' · 指数现货')
-      : '等待东方财富行情';
+          item.pinned ? ' · 收盘快照' : item.dailySource ? ' · 日线 ' + item.dailySource : id === 'btcPerp' ? ' · 币安永续' : id === 'btc' ? ' · 币安现货' : ' · 指数现货')
+      : '等待' + quoteSource(id) + '行情';
     let button = current.get(id);
     if (!button) {
       button = document.createElement('button');
@@ -613,7 +638,7 @@ function renderLedger() {
       [
         [
           esc(market.name),
-          (p.qty > 0 ? '多头' : '空头') + ' / ' + Math.abs(p.qty),
+          (p.qty > 0 ? '多头' : '空头') + ' / ' + formatQty(Math.abs(p.qty)) + ' ' + unitName(),
           number(p.avgPrice),
           '<span class="' + tone(snap.unrealized) + '">' + signed(snap.unrealized) + '</span>',
           [p.takeProfit, p.stopLoss].map((v) => (v == null ? '—' : number(v))).join(' / '),
@@ -623,7 +648,7 @@ function renderLedger() {
     );
   if (tab === 'orders' && a.orders.length)
     content = table(
-      ['委托时间', '方向', '类型 / 报价', '数量', '状态', '操作'],
+      ['委托时间', '方向', '类型 / 报价', '数量（' + unitName() + '）', '状态', '操作'],
       a.orders
         .slice()
         .reverse()
@@ -634,7 +659,7 @@ function renderLedger() {
             ' / ' +
             (o.price ? number(o.price) : '市价') +
             (o.type === 'stopLimit' ? ' → ' + number(o.limitPrice) : ''),
-          o.qty,
+          formatQty(o.qty),
           o.status === 'rejected'
             ? orderStatus[o.status] + ' · ' + esc(o.reason)
             : o.status === 'pending' && o.type === 'stopLimit'
@@ -647,14 +672,14 @@ function renderLedger() {
     );
   if (tab === 'fills' && a.fills.length)
     content = table(
-      ['成交时间', '方向', '数量', '成交价', '手续费'],
+      ['成交时间', '方向', '数量（' + unitName() + '）', '成交价', '手续费'],
       a.fills
         .slice()
         .reverse()
         .map((f) => [
           esc(fmtTime(f.time, market.timeZone)),
           f.side === 'buy' ? '买入' : '卖出',
-          f.qty,
+          formatQty(f.qty),
           number(f.price),
           number(f.fee),
         ]),
@@ -680,7 +705,13 @@ function qtyMaximum(fraction) {
   const direction = side === 'buy' ? 1 : -1,
     qty = a.position.qty;
   const closeQty = Math.sign(qty) === -direction ? Math.abs(qty) : 0;
-  if (closeQty) return Math.floor(closeQty * fraction);
+  const scale = 10 ** (market.quantityDecimals || 0);
+  const floorQty = (amount) => Math.floor(amount * scale + Number.EPSILON * amount * scale * 4) / scale;
+  if (closeQty) return floorQty(closeQty * fraction);
+  if (market.quantityUnit === 'BTC') {
+    const order = { side, type: elements('orderType').value, price: ref, limitPrice: ref };
+    return floorQty(bitcoinOpeningCapacity(a, order, ref) * fraction);
+  }
   const capacity = getSnapshot(a, ref).available;
   const opening =
     a.allowShort || side === 'buy'
@@ -690,7 +721,7 @@ function qtyMaximum(fraction) {
           ((a.contract?.marginRate || 1) + (a.slippageBps * 3 + a.feeBps * 2) / 10000) +
           (a.contract?.tickSize || 0) * (a.contract?.multiplier || 1))
       : 0;
-  return Math.floor((closeQty + opening) * fraction);
+  return floorQty((closeQty + opening) * fraction);
 }
 function ticketEstimate() {
   const type = elements('orderType').value,
@@ -703,8 +734,8 @@ function ticketEstimate() {
   const lotValue = Math.max(0, price || 0) * (terms?.multiplier || 1);
   const money = (amount) => number(amount) + ' ' + market.currency;
   elements('notional').textContent = money(qty * lotValue);
-  elements('lotValueRow').hidden = !terms;
-  elements('marginEstimateRow').hidden = !terms;
+  elements('lotValueRow').hidden = !terms || terms.perpetual;
+  elements('marginEstimateRow').hidden = !terms || terms.perpetual;
   elements('orderMarginRow').hidden = !terms;
   if (terms) {
     const position = s.account.position.qty;
@@ -734,9 +765,10 @@ function renderTicket() {
     terms = s.account.contract;
   elements('quickClose').disabled = !pos.qty;
   elements('qtyUnit').textContent = unitName();
+  renderExposure(elements('exposureStats'), s, bars);
   elements('positionSummary').textContent = pos.qty
     ? (pos.qty > 0 ? '多头 ' : '空头 ') +
-      Math.abs(pos.qty) +
+      formatQty(Math.abs(pos.qty)) +
       ' ' +
       unitName() +
       ' · 均价 ' +
@@ -752,7 +784,13 @@ function renderTicket() {
   elements('accountLeverage').textContent = snap.equity <= 0 && pos.qty ? '—' : number(snap.leverage) + '×';
   const termsNote = elements('contractTermsNote');
   termsNote.hidden = !terms;
-  if (terms) {
+  const leverageControl = elements('perpLeverageField');
+  leverageControl.hidden = !terms?.perpetual;
+  if (terms?.perpetual) {
+    elements('perpLeverage').value = terms.leverage;
+    termsNote.textContent = '全仓模拟 · 维持保证金率 0.4% · 已占用 ' + number(snap.marginUsed) +
+      ' USDT · 按合约成交行情强平，不计资金费。';
+  } else if (terms) {
     const meta = s.feed?.contract || terms;
     const exchangeRate = terms.exchangeMarginRate ?? meta.exchangeMarginRate;
     const date = meta.marginAsOf || meta.asOf;
@@ -780,9 +818,10 @@ function renderTicket() {
       (date ? ' · ' + esc(date) : '');
   }
   elements('currency').textContent = market.currency;
+  elements('buy').textContent = s.marketId === 'btc' ? '买入 BTC' : '买入 / 做多';
   elements('buy').classList.toggle('active', side === 'buy');
   elements('sell').classList.toggle('active', side === 'sell');
-  elements('sell').textContent = s.account.allowShort ? '卖出 / 做空' : '卖出';
+  elements('sell').textContent = s.marketId === 'btc' ? '卖出 BTC' : s.account.allowShort ? '卖出 / 做空' : '卖出';
   elements('submitOrder').textContent = side === 'buy' ? '模拟买入' : '模拟卖出';
   elements('submitOrder').classList.toggle('sell', side === 'sell');
   elements('feeHint').textContent =
@@ -822,19 +861,19 @@ function renderPlay() {
   if (!s.live && bars[s.cursor]) {
     const date = marketDay(bars[s.cursor].time, s.marketId);
     const remaining = Math.max(0, activeDays.length - 1 - activeDays.indexOf(date));
-    clock.textContent = '回放 ' + fmtTime(bars[s.cursor].time, market.timeZone) + '　·　后续 ' + remaining + ' 个交易日';
+    clock.textContent = '回放 ' + fmtTime(bars[s.cursor].time, market.timeZone) + (market.timeZone === 'UTC' ? ' UTC' : '') + '　·　后续 ' + remaining + ' 个交易日';
   }
   if (s.live)
     elements('feedMeta').innerHTML =
-      (s.account.contract ? '公开行情或延时15分钟 · ' : '') +
+      (s.account.contract && domestic(s.marketId) ? '公开行情或延时15分钟 · ' : '') +
       (refreshIssue ? esc(refreshIssue) + ' · ' : '') +
       (s.feed.limitedPeriod === effectivePeriod(s.period) ? '按现有样本合成 · ' : '') +
       (s.feed.quoteOnly ? '仅有当日行情 · ' : s.feed.historyCached ? '使用本机历史缓存 · ' : '') +
       '报价 ' +
-      esc(fmtTime(s.liveQuote.time, market.timeZone)) +
+      esc(fmtTime(s.liveQuote.time, market.timeZone)) + (market.timeZone === 'UTC' ? ' UTC' : '') +
       ' · <a href="' +
       esc(s.feed.quoteUrl) +
-      '" target="_blank" rel="noopener">东方财富</a>';
+      '" target="_blank" rel="noopener">' + quoteSource(s.marketId) + '</a>';
   elements('play').innerHTML = icon(timer ? 'pause' : 'play', 16);
   elements('play').setAttribute('aria-label', timer ? '暂停' : '播放');
   elements('play').disabled = atEnd;
@@ -884,7 +923,7 @@ function render() {
       ? ' · ' +
         (s.feed.anchored
           ? s.feed.tradeDate + ' 收盘基准'
-          : (s.live ? '报价 东方财富 · ' : '') + 'K线 ' + (s.feed.historySource || '东方财富'))
+          : (s.live ? '报价 ' + quoteSource(s.marketId) + ' · ' : '') + 'K线 ' + (s.feed.historySource || quoteSource(s.marketId)))
       : s.simulationReference
         ? ' · 基准 ' +
           s.simulationReference.symbol +
@@ -944,12 +983,17 @@ function setView(next) {
   view = next;
   elements('terminal').hidden = next !== 'terminal';
   elements('journal').hidden = next !== 'journal';
+  elements('history').hidden = next !== 'history';
+  history.replaceState(history.state, '', '#' + next);
   for (const item of all('nav .nav')) {
     item.classList.toggle('active', item.dataset.action === next);
     item.setAttribute('aria-current', item.dataset.action === next ? 'page' : 'false');
   }
   if (next === 'terminal') render();
-  else {
+  else if (next === 'history') {
+    elements('chartPanel').classList.remove('expanded');
+    renderTradeHistory(elements('history'), sessions, s);
+  } else {
     elements('chartPanel').classList.remove('expanded');
     const archives = [...sessions.values()]
       .filter((n) => n.id !== s.id)
@@ -984,6 +1028,13 @@ function setView(next) {
     });
   }
 }
+window.addEventListener('hashchange', () => {
+  if (!s) return;
+  if (location.hash === '#bitcoin') {
+    setView('terminal');
+    void switchMarket('btcPerp');
+  } else if (['#terminal', '#history', '#journal'].includes(location.hash)) setView(location.hash.slice(1));
+});
 const dialog = elements('dialog');
 function sessionConfig() {
   const a = s.account;
@@ -1086,7 +1137,8 @@ function longRunBounds(dataset, marketId) {
 }
 function replaySession(config, dataset, display) {
   const { marketId, kind } = config;
-  const contract = dataset.contract ? { ...dataset.contract, maintenanceRate: dataset.contract.exchangeMarginRate } : null;
+  const contract = marketId === 'btcPerp' ? bitcoinPerpTerms(config.contract?.leverage)
+    : dataset.contract ? { ...dataset.contract, maintenanceRate: dataset.contract.exchangeMarginRate } : null;
   const history = practiceHistory(marketId, kind);
   const period = dataset.display || display;
   return makeSession({
@@ -1112,7 +1164,7 @@ async function randomPeriod() {
   renderPlay();
   try {
     const cfg = sessionConfig();
-    if (!cfg.customCapital) cfg.initialCash = DEFAULT_INITIAL_CASH;
+    if (!cfg.customCapital) cfg.initialCash = defaultCapital(cfg.marketId);
     const display = effectivePeriod(s.period);
     if (s.base !== 'CSV') {
       const archive = await readReplayArchive(s.marketId, cfg.kind, display, isCurrent);
@@ -1256,7 +1308,7 @@ async function choosePeriod(period) {
         s.customBars = feed.bars;
         s.feed.quoteOnly = false;
         s.feed.historyCached = false;
-        s.feed.historySource = feed.historySource || '东方财富';
+        s.feed.historySource = feed.historySource || quoteSource(s.marketId);
         const latest = s.liveQuote.time > feed.quote.time ? s.liveQuote : feed.quote;
         applyBoardQuote(s, latest);
         bars = s.customBars;
@@ -1430,7 +1482,7 @@ async function startFeed({
       if (dataset.bars.length < 3) throw Error('此周期可用行情不足，请选择其他周期。');
     } catch (err) {
       signal?.throwIfAborted();
-      const q = await fetchEastmoneyQuote(marketId, request);
+      const q = await fetchMarketQuote(marketId, request);
       signal?.throwIfAborted();
       const cached = cachedBars(marketId, base, q.symbol);
       if (cached) {
@@ -1491,7 +1543,7 @@ async function startFeed({
       kind,
       quoteOnly,
       desiredBase,
-      historySource: dataset.historySource || '东方财富',
+      historySource: dataset.historySource || quoteSource(marketId),
       historyCached: !!dataset.historyCached,
       symbol: dataset.symbol,
       name: dataset.name,
@@ -1546,7 +1598,7 @@ async function refreshLive(manual = false) {
       } catch {}
     }
 
-    const q = data?.quote || (await fetchEastmoneyQuote(s.marketId, options));
+    const q = data?.quote || (await fetchMarketQuote(s.marketId, options));
     if (s !== instance || s.base !== sourceBase) return;
     const result = applyBoardQuote(s, q);
     if (result.changed && s.markHistory && s.markHistory.at(-1)?.time !== s.account.lastTime)
@@ -1556,7 +1608,7 @@ async function refreshLive(manual = false) {
       s.lastHistoryFetch = Date.now();
       rememberHistory(s.marketId, requestBase, data);
       s.feed.historyCached = false;
-      s.feed.historySource = data.historySource || '东方财富';
+      s.feed.historySource = data.historySource || quoteSource(s.marketId);
       if (s.feed.quoteOnly && data.bars.length > 1) {
         s.base = requestBase;
         s.period = 'BASE';
@@ -1571,9 +1623,9 @@ async function refreshLive(manual = false) {
     s.feed.tradeDate = s.liveQuote.tradeDate;
     refreshIssue = '';
     if (view === 'terminal') render();
-    else if (result.changed) setView('journal');
+    else if (result.changed) setView(view);
     if (result.changed || data) save();
-    if (manual) notify('已核对东方财富报价 · ' + fmtTime(s.liveQuote.time, market.timeZone));
+    if (manual) notify('已核对' + quoteSource(s.marketId) + '报价 · ' + fmtTime(s.liveQuote.time, market.timeZone));
   } catch (err) {
     if (s === instance) {
       refreshIssue = '报价更新失败，保留上次报价';
@@ -1589,15 +1641,15 @@ async function refreshWatch() {
   if (s?.feed && !s.live && !s.feed.anchored) return;
   if (Date.now() - lastWatch < 60000) return;
   lastWatch = Date.now();
-  const wanted = MARKETS.filter((m) => ['csi1000', 'csi500', 'ndx', 'csi300', s?.marketId].includes(m.id));
+  const wanted = MARKETS.filter((m) => ['csi1000', 'csi500', 'btcPerp', 'ndx', 'csi300', s?.marketId].includes(m.id));
   for (const m of wanted) {
     try {
       const old = watch.get(m.id);
       if (domestic(m.id)) {
-        const quote = await fetchEastmoneyQuote(m.id, { contract: 'active' });
+        const quote = await fetchMarketQuote(m.id, { contract: 'active' });
         watch.set(m.id, { quote });
       } else if (old?.values?.length && !old.dailySource) {
-        const quote = await fetchEastmoneyQuote(m.id, { contract: 'index' });
+        const quote = await fetchMarketQuote(m.id, { contract: 'index' });
         watch.set(m.id, { quote, values: [...old.values.slice(0, -1), quote.price] });
       } else {
         const d = await loadChartFeed(m.id, '1D', { contract: 'index', limit: 38, historyOnly: true });
@@ -1623,6 +1675,13 @@ async function refreshWatch() {
   } catch {}
 }
 document.addEventListener('change', (event) => {
+  if (event.target.id === 'perpLeverage' && s?.account.contract?.perpetual) {
+    try {
+      setPerpLeverage(s.account, Number(event.target.value), markBar().close);
+      save();
+    } catch (error) { notify(error.message); }
+    renderTicket();
+  }
   if (event.target.id === 'allPeriods' && event.target.value) choosePeriod(event.target.value);
   if (event.target.id === 'archiveYear' && s) {
     setArchiveYear(event.target.value);
@@ -1650,7 +1709,7 @@ function context() {
     session: s,
     markets: MARKETS,
     onNew: (config) => {
-      if (config.kind === 'future') {
+      if (config.kind === 'future' && domestic(config.marketId)) {
         config.contract = futuresTerms(config.marketId);
         if (!config.customBars) {
           const quote = watch.get(config.marketId).quote;
@@ -1672,7 +1731,8 @@ function context() {
 }
 function submit() {
   const qty = Number(elements('qty').value);
-  if (!Number.isSafeInteger(qty) || qty < 1) throw Error('请输入正整数交易数量');
+  if (!market.quantityDecimals && (!Number.isSafeInteger(qty) || qty < 1))
+    throw Error('请输入正整数交易数量');
   const type = elements('orderType').value,
     order = { side, type, qty };
   if (type !== 'market') order.price = Number(elements('orderPrice').value);
@@ -1687,7 +1747,7 @@ function submit() {
   save();
   notify(
     result.status === 'filled'
-      ? '已模拟成交 ' + result.filledQty + ' ' + unitName() + '，成交价 ' + number(result.fillPrice)
+      ? '已模拟成交 ' + formatQty(result.filledQty) + ' ' + unitName() + '，成交价 ' + number(result.fillPrice)
       : '委托已提交，下一根 K 线起撮合',
   );
 }
@@ -1744,12 +1804,13 @@ function action(key) {
       else
         startFeed({
           marketId: s.marketId,
-          kind: s.feed?.kind || (domestic(s.marketId) ? 'future' : 'spot'),
+          kind: s.feed?.kind || defaultKind(s.marketId),
           base: '5m',
           live: true,
         }).catch((err) => notify(err.message));
       break;
     case 'undoDraw': {
+      if (drawingToolbar.options.locked) return notify('请先解锁画线');
       const items = s.drawings[currentDrawingKey()] || [];
       if (items.length) {
         s.drawings[currentDrawingKey()] = items.slice(0, -1);
@@ -1762,6 +1823,7 @@ function action(key) {
       dialog.close();
       break;
     case 'terminal':
+    case 'history':
     case 'journal':
       setView(key);
       break;
@@ -1772,17 +1834,21 @@ function action(key) {
       elements('chartPanel').classList.toggle('expanded');
       break;
     case 'clearDraw':
+      if (drawingToolbar.options.locked) return notify('请先解锁画线');
+      if (!s.drawings[currentDrawingKey()]?.length) break;
+      if (!confirm('清除本训练当前周期的全部画线？')) break;
       chart.clearDrawings();
       notify('当前周期画线已清除');
       break;
     case 'more':
-    case 'less':
-      elements('qty').value = Math.max(
-        1,
-        Math.floor(Number(elements('qty').value) || 1) + (key === 'more' ? 1 : -1),
-      );
+    case 'less': {
+      const field = elements('qty'), step = Number(field.step);
+      const ticks = Math.floor(Number(field.value || step) / step + 1e-9);
+      field.value = (Math.max(1, ticks + (key === 'more' ? 1 : -1)) * step)
+        .toFixed(market.quantityDecimals || 0);
       ticketEstimate();
       break;
+    }
     case 'submit':
       submit();
       break;
@@ -1790,7 +1856,7 @@ function action(key) {
       const result = closePosition(s.account, markBar());
       render();
       save();
-      notify('已全部平仓 ' + result.filledQty + ' ' + unitName() + '，成交价 ' + number(result.fillPrice));
+      notify('已全部平仓 ' + formatQty(result.filledQty) + ' ' + unitName() + '，成交价 ' + number(result.fillPrice));
       break;
     case 'protect':
       editProtection();
@@ -1814,21 +1880,18 @@ document.addEventListener('click', (event) => {
       return;
     }
     const d = btn.dataset;
+    if (btn.closest('#drawingTools')) return;
     if (d.action) action(d.action);
     else if (d.market) switchMarket(d.market);
     else if (d.unavailablePeriod) {
       notify('本段基础行情为' + baseLabel() + '。要看' + d.unavailablePeriod + '，可在「新建训练」选择分钟行情。');
     } else if (d.period) {
       choosePeriod(d.period);
-    } else if (d.tool) {
-      chart.setTool(d.tool);
-      if (d.tool !== 'crosshair')
-        notify(d.tool === 'trend' ? '在图中依次点选趋势线的两个端点' : '在图中点选水平线价格');
     } else if (d.side) {
       side = d.side;
       renderTicket();
     } else if (d.fraction) {
-      elements('qty').value = qtyMaximum(Number(d.fraction) / 100);
+      elements('qty').value = qtyMaximum(Number(d.fraction) / 100).toFixed(market.quantityDecimals || 0);
       ticketEstimate();
     } else if (d.tab) {
       tab = d.tab;
@@ -1859,7 +1922,7 @@ elements('speed').addEventListener('change', () => {
   save();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape' && !dialog.open) {
     elements('chartPanel').classList.remove('expanded');
     if (chart) chart.setTool('crosshair');
   }
@@ -1897,7 +1960,22 @@ document.addEventListener('visibilitychange', () => {
 });
 function initChart() {
   const quickDelete = elements('trendQuickDelete');
+  drawingToolbar = createDrawingToolbar({
+    rail: elements('drawingTools'), menu: elements('drawingMenu'),
+    onTool: (id) => chart.setTool(id), onOption: (flags) => chart.setDrawingOptions(flags),
+    onAction: (key) => { if (s) action(key); }, notify,
+  });
   chart = createTradingChart(elements('plot'), {
+    requestText: (initial) => new Promise((resolve) => {
+      show('图表文本', '<form id="chartTextForm"><label class="field"><span>标注内容</span><input id="chartText" maxlength="160" required></label><button class="primary modal-action">保存</button></form>');
+      const input = elements('chartText');
+      input.value = initial;
+      input.focus();
+      input.select();
+      let value = null;
+      elements('chartTextForm').onsubmit = (e) => { e.preventDefault(); value = input.value; dialog.close(); };
+      dialog.addEventListener('close', () => resolve(value), { once: true });
+    }),
     onHover: (b) => writeOhlc(b || aggregated.at(-1)),
     onDrawingAnchor: (point) => {
       quickDelete.hidden = !point;
@@ -1911,7 +1989,7 @@ function initChart() {
     onDrawingSelection: (style) => {
       elements('trendEditor').hidden = !style;
       if (!style) return;
-      if (elements('toast').textContent === '在图中依次点选趋势线的两个端点') elements('toast').classList.remove('toast-on');
+      elements('trendPattern').value = style.pattern;
       elements('trendColor').value = style.color;
       elements('trendWidth').value = String(style.width);
       for (const button of all('[data-trend-color]')) {
@@ -1925,13 +2003,13 @@ function initChart() {
         save();
       }
     },
-    onToolChange: (tool) =>
-      all('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool)),
+    onToolChange: drawingToolbar.setTool,
   });
   elements('trendEditor').addEventListener('click', (event) => {
     const swatch = event.target.closest('[data-trend-color]');
     if (swatch) chart.setTrendStyle({ color: swatch.dataset.trendColor });
   });
+  elements('trendPattern').addEventListener('change', (e) => chart.setTrendStyle({ pattern: e.target.value }));
   elements('trendWidth').addEventListener('change', (event) => {
     chart.setTrendStyle({ width: Number(event.target.value) });
   });
@@ -1959,7 +2037,7 @@ try {
   }
   try {
     for (const [id, item] of JSON.parse(localStorage.getItem(watchStore) || '[]'))
-      if (byId(id) && item?.quote?.price && item.quote.tradeDate >= watch.get(id).quote.tradeDate)
+      if (byId(id) && item?.quote?.price && item.quote.tradeDate >= (watch.get(id)?.quote?.tradeDate || ''))
         watch.set(id, item);
   } catch {}
   const restored = applyRecovery(active);
@@ -1977,7 +2055,7 @@ try {
     elements('modeBadge').textContent = '正在打开往年历史训练…';
     const id = restored?.marketId || 'csi1000';
     try {
-      await startFeed({ marketId: id, kind: domestic(id) ? 'future' : 'spot', base: '5m',
+      await startFeed({ marketId: id, kind: defaultKind(id), base: '5m',
         live: false, archiveYear: 'auto' });
     } catch (error) {
       if (restored) await activate(restored);
@@ -1991,7 +2069,8 @@ try {
     action(actionToOpen);
   }
   refreshWatch();
-  if (location.hash === '#journal') setView('journal');
+  if (initialViewHash === '#bitcoin') await switchMarket('btcPerp');
+  if (['#history', '#journal'].includes(initialViewHash)) setView(initialViewHash.slice(1));
 } catch (err) {
   elements('saved').textContent = '加载失败';
   notify('训练终端未能启动：' + err.message);

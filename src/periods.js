@@ -42,7 +42,7 @@ const zoneRegions = { 'Asia/Shanghai': 'A股', 'Asia/Hong_Kong': '港股', 'Amer
 const zoneCache = new Map();
 const weeklyCache = new Map();
 
-function exchangeClock(time, market) {
+export function exchangeClock(time, market) {
   if (typeof time === 'string') return { date: time, minute: 0 };
   const zone = market.timeZone || 'UTC';
   let cache = zoneCache.get(zone);
@@ -98,6 +98,12 @@ function intradayKey(minute, interval, windows) {
   return 'after-' + Math.floor((minute - windows.at(-1)[1]) / interval);
 }
 
+export function tradingWindows(market, date) {
+  const region = market.region || zoneRegions[market.timeZone];
+  return market.exchange === 'CFFEX' && date < '2016-01-01'
+    ? earlyFuturesSessions : sessions[region] || [[0, 1440]];
+}
+
 function keyOf(time, period, market) {
   if (period === 'BASE') return time;
   const { date, minute } = exchangeClock(time, market);
@@ -108,15 +114,12 @@ function keyOf(time, period, market) {
   if (period === '1Y') return date.slice(0, 4);
   const duration = durations.get(period);
   if (!duration) throw new Error('不支持的图表周期：' + period);
-  const region = market.region || zoneRegions[market.timeZone];
-  const windows = market.exchange === 'CFFEX' && date < '2016-01-01'
-    ? earlyFuturesSessions : sessions[region] || [[0, 1440]];
-  return date + '/' + intradayKey(minute, duration, windows);
+  return date + '/' + intradayKey(minute, duration, tradingWindows(market, date));
 }
 
 const seconds = (time) => (typeof time === 'number' ? time : Date.parse(time) / 1000);
 
-function sourceInterval(base, bars) {
+export function sourceInterval(base, bars) {
   if (base !== 'CSV') return durations.get(base) || base;
   // The modal gap represents the imported sample cadence. Holidays, lunch
   // breaks and overnight gaps do not lower its inferred resolution.

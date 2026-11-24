@@ -1,9 +1,10 @@
-// Execution marks for the live board always come from Eastmoney. A historical
+// Equity and index execution marks come from Eastmoney. A historical
 // replay can run entirely from verified candles for the requested instrument.
 import { fetchEastmoneyBars, fetchEastmoneyQuote } from './eastmoney.js';
+import { getBinanceQuote, loadBitcoinFeed } from './binance-history.js';
 import { fetchSecondaryHistory } from './secondary-history.js';
 import { fetchIndexHistory } from './index-history.js';
-import { MARKETS } from './market.js';
+import { MARKETS } from './market.js?v=20261124';
 
 const minutes = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1H': 60 };
 
@@ -18,7 +19,13 @@ function availableAtQuote(bar, base, quote, market) {
   return Number(hour) >= (market.region === 'A股' ? 15 : 16);
 }
 
+export function fetchMarketQuote(marketId, options = {}) {
+  if (marketId === 'btc' || marketId === 'btcPerp') return getBinanceQuote({ ...options, marketId });
+  return fetchEastmoneyQuote(marketId, options);
+}
+
 export async function loadChartFeed(marketId, base, options = {}) {
+  if (marketId === 'btc' || marketId === 'btcPerp') return loadBitcoinFeed(base, { ...options, marketId });
   let primary, reason;
   try {
     primary = await fetchEastmoneyBars(marketId, base, options);

@@ -49,30 +49,30 @@ function decodeMinutes(bytes, count) {
   return result;
 }
 
-async function loadRows(period, base, signal) {
-  if (!bundles.has(period.pack)) {
-    const url = new URL('../data/' + period.pack + '.json', import.meta.url);
+export async function openArchiveEntry(pack, key, signal) {
+  if (!bundles.has(pack)) {
+    const url = new URL('../data/' + pack + '.json', import.meta.url);
     const request = fetch(url).then((res) => {
       if (!res.ok) throw Error('站内历史档案加载失败');
       return res.json();
-    }).catch((err) => { bundles.delete(period.pack); throw err; });
-    bundles.set(period.pack, request);
+    }).catch((err) => { bundles.delete(pack); throw err; });
+    bundles.set(pack, request);
     if (bundles.size > 4) bundles.delete(bundles.keys().next().value);
   }
-  const payload = await bundles.get(period.pack);
+  const payload = await bundles.get(pack);
   if (signal?.aborted) throw signal.reason;
-  const content = payload[period.key];
+  const content = payload[key];
   if (typeof content !== 'string') throw Error('历史档案中找不到该时段');
   const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  const unpacked = new Response(stream);
-  return base === '5m' ? decodeMinutes(new Uint8Array(await unpacked.arrayBuffer()), period.count) : unpacked.json();
+  return new Response(stream);
 }
 
 export async function loadLocalPeriod(marketId, kind, base, candidate, {signal} = {}) {
   const period = localPeriods(marketId, kind, base).find((p) => p.key === candidate?.key);
   if (!period) return null;
-  const rows = await loadRows(period, base, signal);
+  const payload = await openArchiveEntry(period.pack, period.key, signal);
+  const rows = base === '5m' ? decodeMinutes(new Uint8Array(await payload.arrayBuffer()), period.count) : await payload.json();
   if (signal?.aborted) throw signal.reason;
   if (rows.length !== period.count) throw Error('历史档案根数不符');
   const bars = rows.map(([time, open, high, low, close, volume]) => ({time, open, high, low, close, volume}));
