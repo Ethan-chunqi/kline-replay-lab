@@ -1509,6 +1509,7 @@ dialog::backdrop {
   padding-right: 12px;
 }
 .pencil-row {
+  flex-wrap: wrap;
   gap: 7px;
   padding: 5px 12px;
   border-top: 1px solid var(--soft);
@@ -1902,30 +1903,35 @@ html[data-theme='dark'] #toast {
   align-items: center;
   gap: 4px;
 }
+.trend-swatches { gap: 2px; }
+.trend-swatches > span { margin-right: 4px; }
 .trend-swatches button {
-  width: 25px;
-  height: 25px;
-  padding: 4px;
+  justify-content: center;
+  gap: 4px;
+  min-width: 36px;
+  min-height: 30px;
+  padding: 3px 5px;
   border: 1px solid transparent;
-  border-radius: 50%;
+  border-radius: 5px;
+  color: var(--muted);
 }
 .trend-swatches button::before {
-  display: block;
-  height: 100%;
+  content: '';
+  flex: 0 0 11px;
+  height: 11px;
   border-radius: 50%;
   background: var(--swatch);
-  content: '';
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 13%);
 }
 .trend-swatches button[aria-pressed='true'] {
-  border-color: var(--ink);
+  border-color: var(--muted);
+  color: var(--ink);
+  background: var(--surface2);
 }
-#trendColor {
-  width: 28px;
-  height: 25px;
-  padding: 2px;
-  cursor: pointer;
-  background: var(--surface);
-  border: 1px solid var(--line);
+#drawingHint:empty { display: none; }
+@media (max-width: 620px) {
+  #drawingHint { order: 1; flex-basis: 100%; }
+  .trend-swatches button { min-height: 36px; }
 }
 .trend-width select {
   width: auto;
