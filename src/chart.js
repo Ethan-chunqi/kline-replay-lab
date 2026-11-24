@@ -1,4 +1,4 @@
-import { attachDrawings } from './drawing-layer.js';
+import { attachDrawings } from './drawing-layer.js?v=20261124trend3';
 import {
   CandlestickSeries,
   ColorType,
@@ -416,6 +416,7 @@ export function createTradingChart(container, callbacks = {}) {
     resetView,
     zoom,
     setTool: drawing.setTool,
+    cancelDrawing: drawing.cancelDrawing,
     setDrawingOptions: drawing.setDrawingOptions,
     clearDrawings: drawing.clearDrawings,
     getDrawings: drawing.getDrawings,

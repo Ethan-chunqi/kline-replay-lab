@@ -1,5 +1,5 @@
 // Public spot and USDⓈ-M endpoints have distinct books, sequences and candle streams.
-import { apiIntervals, bitcoinTradeQuote, liveBitcoinCandle, loadBitcoinFeed } from './binance-history.js?v=20261124live';
+import { apiIntervals, bitcoinTradeQuote, getBinanceQuote, liveBitcoinCandle, loadBitcoinFeed } from './binance-history.js?v=20261124live';
 import { isFreshBitcoinQuote } from './bitcoin-quote.js';
 export { isFreshBitcoinQuote };
 
@@ -109,16 +109,25 @@ export function subscribeBitcoinLive(marketId, base, {initialQuote, onQuote, onC
     if (request || stopped) return;
     const current = new AbortController();
     request = current;
+    const acceptsPoll = () => !stopped && !current.signal.aborted && globalThis.navigator?.onLine !== false
+      && (!lastWsTrade || Date.now() - lastWsTrade >= quietMs);
     try {
-      const snapshot = await loadBitcoinFeed(base, {marketId, signal: current.signal, limit: 3});
-      if (stopped || current.signal.aborted || (lastWsTrade && Date.now() - lastWsTrade < quietMs)) return;
-      if (!isFreshBitcoinQuote(marketId, snapshot.quote)) { status('offline'); return; }
-      for (const bar of snapshot.bars)
-        onCandle?.({marketId, base, bar, asOfMs: snapshot.quote.tradeTimeMs});
-      publish(snapshot.quote, 'polling');
+      const options = {marketId, signal: current.signal};
+      let bars = [], quote;
+      try {
+        const snapshot = await loadBitcoinFeed(base, {...options, limit: 3});
+        bars = snapshot.bars;
+        quote = snapshot.quote;
+      } catch {
+        if (!acceptsPoll()) return;
+        quote = await getBinanceQuote(options);
+      }
+      if (!acceptsPoll()) return;
+      if (!isFreshBitcoinQuote(marketId, quote)) { status('offline'); return; }
+      for (const bar of bars) onCandle?.({marketId, base, bar, asOfMs: quote.tradeTimeMs});
+      publish(quote, 'polling');
     } catch {
-      if (!stopped && !current.signal.aborted && (!lastWsTrade || Date.now() - lastWsTrade >= quietMs))
-        status('offline');
+      if (acceptsPoll()) status('offline');
     } finally {
       if (request === current) request = null;
       nextPoll = Date.now() + pollMs;
