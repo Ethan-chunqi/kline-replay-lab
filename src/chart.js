@@ -173,7 +173,8 @@ export function createTradingChart(container, callbacks = {}) {
   let bars = [],
     rowIndex = new Map(),
     options = {};
-  let activeMarket, displayKey, levelsKey, lastPriceColor, lastSource;
+  let activeMarket, displayKey, levelsKey, lastPriceColor, lastSource, lastTime;
+  let lastCount = 0;
   let ready = false,
     destroyed = false,
     lastWidth = root.clientWidth;
@@ -301,15 +302,15 @@ export function createTradingChart(container, callbacks = {}) {
     options = { precision: 2, ...options, ...next };
     options.precision = Math.max(0, Math.min(8, Math.trunc(options.precision) || 0));
     const marketKey = [options.marketId, options.timeframe].join('|');
-    const oldLast = bars.at(-1), oldCount = bars.length;
+    const oldTime = lastTime, oldCount = lastCount;
     // Live price events only change the last candle or append to the same backing series.
     // A historical refresh replaces the backing array and must update the entire chart.
-    const incremental = next.liveSeries && next.liveSeries === lastSource && oldLast && marketKey === activeMarket
+    const incremental = next.liveSeries && next.liveSeries === lastSource && oldCount > 0 && marketKey === activeMarket
       && (visibleBars.length === oldCount || visibleBars.length === oldCount + 1)
-      && visibleBars[oldCount - 1]?.time === oldLast.time;
+      && visibleBars[oldCount - 1]?.time === oldTime;
     lastSource = next.liveSeries;
     const prevRange = chart.timeScale().getVisibleLogicalRange();
-    const distanceFromEdge = prevRange ? bars.length - 1 - prevRange.to : 0;
+    const distanceFromEdge = prevRange ? oldCount - 1 - prevRange.to : 0;
     const changedMarket = activeMarket !== marketKey;
     if (changedMarket) {
       levelsKey = undefined;
@@ -333,6 +334,8 @@ export function createTradingChart(container, callbacks = {}) {
       });
     }
     const latest = bars.at(-1);
+    lastTime = latest?.time;
+    lastCount = bars.length;
     const priceColor = latest && latest.close < latest.open ? colors.down : colors.up;
     if (lastPriceColor !== priceColor) {
       // Set explicitly so a hollow candle never gives the last-price label a white fill.
@@ -347,9 +350,9 @@ export function createTradingChart(container, callbacks = {}) {
     renderMarkers();
     displayLevels(options.levels);
     drawing.update(next.drawings, changedMarket);
-    if (changedMarket || !prevRange || !oldLast) resetView();
+    if (changedMarket || !prevRange || !oldCount) resetView();
     else if (bars.length && (!incremental || oldCount !== bars.length)) {
-      const lastIndex = rowIndex.get(isoKey(oldLast.time));
+      const lastIndex = rowIndex.get(isoKey(oldTime));
       const advanced = lastIndex === undefined ? 0 : bars.length - 1 - lastIndex;
       const prepended = lastIndex === undefined ? 0 : lastIndex - (oldCount - 1);
       const shift = prepended + (advanced > 0 && distanceFromEdge < 2 && !drawing.interacting() ? advanced : 0);
