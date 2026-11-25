@@ -17,10 +17,12 @@ export async function openStorage() {
     });
   return {
     load: () => Promise.all([read('sessions', 'getAll'), read('settings', 'get', 'active')]),
-    save(session) {
+    save(session, recoveredArchive) {
       return new Promise((resolve, reject) => {
         const tx = db.transaction(['sessions', 'settings'], 'readwrite');
-        tx.objectStore('sessions').put(session);
+        const sessions = tx.objectStore('sessions');
+        if (recoveredArchive) sessions.put(recoveredArchive);
+        sessions.put(session);
         tx.objectStore('settings').put(session.id, 'active');
         tx.oncomplete = resolve;
         tx.onabort = () => reject(tx.error);

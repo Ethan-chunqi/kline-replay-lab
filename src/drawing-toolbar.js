@@ -19,7 +19,9 @@ const singlePoint = new Set(['horizontal', 'vertical', 'crossLine', 'priceLine',
 const cursorTools = ['pointer', 'crosshair'];
 
 function hint(tool) {
-  if (tool === 'trend') return '点两处画趋势线，点已有线可编辑';
+  if (tool === 'trend') return matchMedia('(pointer: coarse)').matches
+    ? '轻点两处画线 · 横滑看历史 · 竖滑翻页'
+    : '点两处画线 · 拖端点调整 · 拖线身移动';
   if (tool === 'parallel') return '先点轨道线的两个端点，再点第三点确定宽度';
   if (tool === 'text') return '点击图表放置文本，双击已有文本可编辑';
   if (singlePoint.has(tool)) return '点击图表放置' + labels[tool];

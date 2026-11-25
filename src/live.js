@@ -130,9 +130,8 @@ function updateChart(session, quote, previous, clock, period) {
   const bars = session.customBars ?? (session.customBars = []);
   const tail = bars.at(-1);
   const bucket = period ? bucketAt(quote.time, clock, period) : { time: clock.date, append: true };
-  if (!bucket || (tail && unix(tail.time) > unix(bucket.time))) return;
+  if (!bucket?.append || (tail && unix(tail.time) > unix(bucket.time))) return;
   const existing = tail?.time === bucket.time;
-  if (!existing && !bucket.append) return;
   const candle = existing ? tail : point(bucket.time, quote.price);
   if (period === 0) {
     if (finitePrice(quote.open)) candle.open = quote.open;
@@ -157,6 +156,13 @@ function updateChart(session, quote, previous, clock, period) {
   }
   candle.close = quote.price;
   if (!existing) bars.push(candle);
+}
+
+// Refresh only the chart when a public historical snapshot arrives alongside a newer quote.
+export function updateQuoteCandle(session, quote, previous = null) {
+  markFromQuote(quote);
+  if (quote.symbol !== session.feed?.symbol) return;
+  updateChart(session, quote, previous, marketClock(session, quote), sourcePeriod(session));
 }
 
 function newerInSecond(previous, next) {

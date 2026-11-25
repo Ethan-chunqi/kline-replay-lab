@@ -16,6 +16,7 @@ export const MARKETS = [
   },
   {
     id: 'csi500',
+    archivedOnly: true,
     name: '中证500',
     short: '中证500',
     symbol: '000905',

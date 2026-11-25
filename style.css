@@ -117,9 +117,9 @@ button svg {
   width: 34px;
   height: 34px;
 }
-.brand-light {
-  font-weight: 490;
-}
+.brand > span { white-space: nowrap; letter-spacing: 0; }
+.live-history-range { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.live-history-range .text-button { font-size: inherit; }
 .mast nav {
   display: flex;
   align-self: stretch;
@@ -275,7 +275,7 @@ h1 {
 }
 .watchlist {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -1830,6 +1830,10 @@ html[data-theme='dark'] #toast {
   color: #ffd8b5;
   border-color: var(--accent-line);
   box-shadow: 0 8px 30px rgb(0 0 0 / 35%);
+}
+#plot [data-drawing-tool] {
+  -webkit-user-select: none;
+  user-select: none;
 }
 #plot [data-panning],
 #plot [data-panning] * {

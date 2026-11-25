@@ -6,7 +6,7 @@ const textFont = '12px system-ui, sans-serif';
 const validColor = (value) => /^#[0-9a-f]{6}$/i.test(value);
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
-export function attachDrawings({ root, chart, priceSeries, callbacks, data, row, precision, palette, ready, inPane }) {
+export function attachDrawings({ root, chart, priceSeries, callbacks, data, row, precision, palette, ready, inPane, startPan }) {
   const timeAxis = chart.timeScale();
   const metrics = document.createElement('canvas').getContext('2d');
   metrics.font = textFont;
@@ -226,14 +226,13 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   function applyCursor() {
     chart.applyOptions({
       crosshair: { mode: tool === 'pointer' ? CrosshairMode.Hidden : CrosshairMode.Normal },
-      handleScroll: { pressedMouseMove: selecting(), horzTouchDrag: selecting() },
     });
     root.dataset.drawingTool = tool;
   }
   function setTool(next) {
-    finishEdit(false);
+    cancelGesture();
     select(-1);
-    draft = []; hover = null; press = null; version++;
+    draft = []; hover = null; version++;
     tool = next === 'pointer' || Object.hasOwn(anchorCounts, next) ? next : 'crosshair';
     if (!selecting() && (flags.hidden || flags.locked)) tool = cursor;
     if (selecting()) cursor = tool;
@@ -281,9 +280,9 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   }
   function update(next, changedMarket) {
     if (changedMarket) {
-      finishEdit(false);
+      cancelGesture();
       select(-1);
-      draft = []; hover = null; press = null; version++;
+      draft = []; hover = null; version++;
       items = [];
     }
     if (!edit && Array.isArray(next)) items = structuredClone(next);
@@ -296,10 +295,16 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     const rect = root.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   };
-  function selectAt(x, y) {
-    if (!selecting()) return;
-    const hit = hitAt(x, y);
-    if (hit) select(hit.index, hit);
+  function finishPress() {
+    if (!press) return;
+    const { id } = press;
+    press = null;
+    root.removeAttribute('data-panning');
+    if (root.hasPointerCapture(id)) root.releasePointerCapture(id);
+  }
+  function cancelGesture() {
+    finishPress();
+    finishEdit(false);
   }
   function finishEdit(commit) {
     if (!edit) return;
@@ -312,24 +317,29 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     requestRedraw();
   }
   function pointerDown(event) {
-    if (!ready() || !event.isPrimary || event.button !== 0 || !inPane(event)) return;
-    const pos = position(event);
+    const touch = event.pointerType === 'touch';
+    if (touch && !event.isPrimary) { cancelGesture(); return; }
+    const right = event.pointerType === 'mouse' && event.button === 2;
+    if (!ready() || (!right && event.button !== 0) || !inPane(event) || press || edit) return;
+    const pos = position(event), slop = touch ? 9 : 4;
     root.focus({ preventScroll: true });
-    const hit = editingTool() && hitAt(pos.x, pos.y, event.pointerType === 'touch' ? 14 : 7);
+    const hit = !right && editingTool() && hitAt(pos.x, pos.y, touch ? 14 : 7);
     if (hit) {
       select(hit.index, hit);
-      edit = { ...pos, ...hit, original: structuredClone(items[hit.index]), id: event.pointerId, moved: false };
+      edit = { ...hit, original: structuredClone(items[hit.index]), id: event.pointerId, moved: false, slop };
     } else {
-      select(-1);
-      if (selecting() || flags.hidden || flags.locked) return;
-      press = { ...pos, id: event.pointerId };
+      press = { ...pos, id: event.pointerId, right, touch, slop, moved: false,
+        started: event.timeStamp, pan: touch ? null : startPan() };
     }
-    event.preventDefault();
-    event.stopPropagation();
-    root.setPointerCapture(event.pointerId);
+    // The chart library owns one-finger horizontal scrolling and two-finger pinch.
+    // Let the browser handle a vertical swipe anywhere on the empty plot.
+    if (!touch) {
+      event.preventDefault();
+      root.setPointerCapture(event.pointerId);
+    }
   }
   function drag(event, pos) {
-    if (!edit.moved && Math.hypot(pos.x - edit.x, pos.y - edit.y) < 3) return;
+    if (!edit.moved && Math.hypot(pos.x - edit.x, pos.y - edit.y) < edit.slop) return;
     const source = linePoints(edit.original);
     const startPrice = priceSeries.coordinateToPrice(edit.y);
     const shift = Math.round((pos.x - edit.x) / timeAxis.options().barSpacing);
@@ -355,6 +365,18 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   function pointerMove(event) {
     const pos = position(event);
     if (edit?.id === event.pointerId) return drag(event, pos);
+    if (press?.id === event.pointerId) {
+      const dx = pos.x - press.x, dy = pos.y - press.y;
+      if (!press.moved && Math.hypot(dx, dy) < press.slop) return;
+      press.moved = true;
+      if (press.pan) {
+        root.setAttribute('data-panning', '');
+        press.pan(dx, dy);
+      }
+      if (hover) { hover = null; requestRedraw(); }
+      return;
+    }
+    if (event.pointerType === 'touch' || !draft.length && tool === 'trend') return;
     if (!ready() || selecting() || flags.hidden || flags.locked) return;
     hover = inPane(event) ? chartPoint(pos.x, pos.y) : null;
     requestRedraw();
@@ -395,14 +417,21 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
     save();
   }
   function pointerUp(event) {
-    const start = press;
-    press = null;
     if (edit?.id === event.pointerId) return finishEdit(event.type === 'pointerup');
-    if (!start || start.id !== event.pointerId) return;
-    if (root.hasPointerCapture(start.id)) root.releasePointerCapture(start.id);
-    if (event.type !== 'pointerup' || !inPane(event)) return;
+    if (!press || press.id !== event.pointerId) return;
+    const start = press;
+    finishPress();
+    if (event.type !== 'pointerup' || start.moved || !inPane(event)) return;
     const pos = position(event);
-    if (Math.hypot(pos.x - start.x, pos.y - start.y) <= 7) void place(pos);
+    if (Math.hypot(pos.x - start.x, pos.y - start.y) >= start.slop ||
+        (start.touch && event.timeStamp - start.started > 550)) return;
+    if (start.right) {
+      const hit = editingTool() && hitAt(pos.x, pos.y);
+      if (hit) select(hit.index, hit);
+      return;
+    }
+    select(-1);
+    if (!selecting() && !flags.hidden && !flags.locked) void place(pos);
   }
   root.addEventListener('pointerdown', pointerDown, true);
   root.addEventListener('pointermove', pointerMove);
@@ -410,9 +439,14 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   root.addEventListener('pointerleave', () => {
     if (hover) { hover = null; requestRedraw(); }
   });
-  for (const name of ['touchstart', 'touchmove']) root.addEventListener(name, (event) => {
-    // A mobile user can still scroll vertically over an armed trend tool before a drag edit.
-    if (!edit && (tool === 'trend' || (!press && selecting()))) return;
+  root.addEventListener('contextmenu', (event) => {
+    if (inPane(event)) event.preventDefault();
+  });
+  root.addEventListener('touchstart', (event) => {
+    if (edit && event.touches.length === 1) event.stopPropagation();
+  }, { capture: true, passive: true });
+  root.addEventListener('touchmove', (event) => {
+    if (!edit || event.touches.length !== 1) return;
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
   }, { capture: true, passive: false });
@@ -427,12 +461,11 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
       items[hit.index].text = value; requestRedraw(); save();
     }
   });
-  function blur() { finishEdit(false); press = null; }
-  window.addEventListener('blur', blur);
+  window.addEventListener('blur', cancelGesture);
   function destroy() {
     version++;
-    blur();
-    window.removeEventListener('blur', blur);
+    cancelGesture();
+    window.removeEventListener('blur', cancelGesture);
     publishAnchor(null);
   }
   function themeChanged() {
@@ -445,5 +478,5 @@ export function attachDrawings({ root, chart, priceSeries, callbacks, data, row,
   }
   setTool('trend');
   return { update, setTool, cancelDrawing, setDrawingOptions, getDrawings, clearDrawings, setTrendStyle, deleteSelectedTrend,
-    selectAt, selecting, themeChanged, destroy };
+    cancelGesture, interacting: () => !!(press || edit || draft.length), themeChanged, destroy };
 }

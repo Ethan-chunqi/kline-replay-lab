@@ -1,12 +1,13 @@
-import { MARKETS, generateBars } from './market.js?v=20261124';
+import { MARKETS, generateBars } from './market.js?v=20261124range2';
 import { timeframeOptions, periodBars, executionTime, nextDisplayCursor, exchangeClock, tradingWindows } from './periods.js?v=20261120b';
 import { anchoredScenario, SNAPSHOT_QUOTES } from './anchor.js';
 import { pickRandomStart, visitedBarRanges } from './random-period.js?v=20261120b';
 import { replayCatalog, readHistoricalPeriod } from './replay-library.js?v=20261124';
-import { fetchMarketQuote, loadChartFeed } from './feed-service.js?v=20261124live2';
+import { fetchMarketQuote, loadChartFeed } from './feed-service.js?v=20261124range2';
+import { assessLiveDepth } from './live-depth.js';
 import { subscribeBitcoinLive, applyBitcoinCandle, isFreshBitcoinQuote } from './bitcoin-stream.js?v=20261124live2';
 import { futuresTerms } from './eastmoney.js';
-import { tradingBar, applyLiveQuote } from './live.js?v=20261124live2';
+import { tradingBar, applyLiveQuote, updateQuoteCandle } from './live.js?v=20261124range2';
 import {
   bitcoinPerpTerms,
   bitcoinOpeningCapacity,
@@ -20,12 +21,12 @@ import {
   closePosition,
   updateProtection,
 } from './engine.js?v=20261124';
-import { createTradingChart } from './chart.js?v=20261124trend3';
-import { renderJournal } from './journal.js?v=20261124';
-import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261124live2';
-import { openStorage } from './storage.js';
+import { createTradingChart } from './chart.js?v=20261125drag';
+import { renderJournal } from './journal.js?v=20261124range2';
+import { openNew, openHelp, openMarkets } from './dialogs.js?v=20261125drag';
+import { openStorage } from './storage.js?v=20261124range2';
 import { icon } from './icons.js?v=20261124';
-import { createDrawingToolbar } from './drawing-toolbar.js?v=20261124trend3';
+import { createDrawingToolbar } from './drawing-toolbar.js?v=20261125drag';
 import { renderExposure } from './exposure-display.js';
 import { renderTradeHistory } from './trade-history-view.js?v=20261124live2';
 
@@ -42,6 +43,9 @@ const number = (n, places = 2) =>
 const signed = (n) => (n >= 0 ? '+' : '−') + number(Math.abs(n));
 const tone = (n) => (n >= 0 ? 'positive' : 'negative');
 const byId = (id) => MARKETS.find((m) => m.id === id);
+const trainingMarkets = MARKETS.filter((market) => !market.archivedOnly);
+const availableMarket = (id) => trainingMarkets.some((market) => market.id === id);
+const watchlistIds = ['csi1000', 'btcPerp', 'ndx', 'csi300'];
 const humanName = (name) => name.replace(/(\D)(\d)/, '$1 $2');
 const defaultSeed = 10,
   defaultStart = 119;
@@ -61,6 +65,7 @@ const orderStatus = { pending: '待成交', filled: '已成交', cancelled: '已
 const seedNumber = () => crypto.getRandomValues(new Uint32Array(1))[0];
 const sessions = new Map();
 const initialViewHash = location.hash;
+const requestedTradeDays = 20;
 let pendingInitialAction = '';
 let activeDays = [];
 let workspaceRequest = null;
@@ -94,12 +99,13 @@ let s,
 const domestic = (id) => ['csi1000', 'csi500', 'csi300'].includes(id);
 const watchStore = 'wavelab-main-contract-watch';
 const watch = new Map(
-  Object.entries(SNAPSHOT_QUOTES).map(([id, quote]) => [id, { quote: quote.future || quote, pinned: true }]),
+  Object.entries(SNAPSHOT_QUOTES).filter(([id]) => availableMarket(id)).map(([id, quote]) => [id, { quote: quote.future || quote, pinned: true }]),
 );
 const markBar = () => tradingBar(s, bars[s.cursor]);
 const unitName = () => market.quantityUnit || (s.account.contract ? '手' : '单位');
 const formatQty = (value) => market.quantityDecimals ? number(value, market.quantityDecimals) : String(value);
-const quoteSource = (id) => byId(id)?.continuous ? '币安' : '东方财富';
+const quoteSource = (id) => byId(id)?.continuous ? '币安'
+  : (s?.live && s.marketId === id ? s.liveQuote?.providerName : null) || watch.get(id)?.quote?.providerName || '东方财富';
 const defaultKind = (id) => domestic(id) || id === 'btcPerp' ? 'future' : 'spot';
 const baseIDs = ['1m', '3m', '5m', '10m', '15m', '30m', '1H', '2H', '4H', '1D', '1W', '1M', '1Q', '1Y'];
 const baseNames = [
@@ -148,6 +154,7 @@ function notify(message) {
   toastTimer = setTimeout(() => elements('toast').classList.remove('toast-on'), 3200);
 }
 const recoveryKey = 'wavelab-pending-save';
+let archiveRecovery = null;
 function recoveryRecord() {
   try {
     return JSON.parse(localStorage.getItem(recoveryKey));
@@ -164,17 +171,20 @@ function save() {
   // A small synchronous journal covers a refresh before IndexedDB commits.
   // Imported source bars are immutable and only stored in IndexedDB.
   try {
-    localStorage.setItem(recoveryKey, JSON.stringify({ token, state, usesImport: !!customBars }));
+    if (!archiveRecovery) localStorage.setItem(recoveryKey, JSON.stringify({ token, state, usesImport: !!customBars }));
   } catch {}
   if (!store) {
     elements('saved').textContent = '浏览器存储受限';
     return Promise.resolve(false);
   }
   elements('saved').textContent = '正在保存训练记录…';
+  const recovered = archiveRecovery;
   return store
-    .save(s)
+    .save(s, recovered?.session)
     .then(() => {
-      if (recoveryRecord()?.token === token) {
+      if (archiveRecovery === recovered) archiveRecovery = null;
+      const pending = recoveryRecord();
+      if (pending && (pending.token === token || pending.token === recovered?.token)) {
         try {
           localStorage.removeItem(recoveryKey);
         } catch {}
@@ -201,6 +211,8 @@ function applyRecovery(active) {
   if ((active?.updated || 0) > buffered.updated || (stored?.updated || 0) > buffered.updated) return active;
   const next = { ...buffered, customBars: stored?.customBars };
   sessions.set(next.id, next);
+  // Keep the last unsaved retired-market changes until both accounts commit together.
+  if (byId(next.marketId)?.archivedOnly) archiveRecovery = { session: next, token: record.token };
   return next;
 }
 function getBars(config) {
@@ -273,7 +285,7 @@ function makeSession(config = {}) {
     updated: Date.now(),
   };
   if (config.live) {
-    applyBoardQuote(created, config.quote);
+    applyLiveQuote(created, config.quote);
     created.entryMark = config.quote.price;
     created.markHistory = [{ time: created.account.lastTime, price: config.quote.price }];
   }
@@ -299,6 +311,7 @@ function displayMarket(session = s) {
   return session.customBars ? { ...profile, name: session.customName || '自选行情', symbol: 'CSV' } : profile;
 }
 function activate(next) {
+  if (!availableMarket(next.marketId)) return openWorkspace(!!next.live);
   stop();
   stopBitcoinStream();
   clearWorkspaceRequest();
@@ -345,8 +358,8 @@ function activate(next) {
   chart.setTool('trend');
   setView('terminal');
   if (s.live) {
-    if (market.continuous) { startBitcoinStream(); void refreshBitcoinHistory(next); }
-    else void refreshLive();
+    if (market.continuous) startBitcoinStream();
+    void refreshLive();
   }
   return save();
 }
@@ -369,7 +382,7 @@ function showWorkspaceNavigation(live, next = 'terminal') {
     item.setAttribute('aria-current', active ? 'page' : 'false');
   }
 }
-async function openWorkspace(live, marketId, savedSession) {
+async function openWorkspace(live, marketId) {
   stop();
   clearWorkspaceRequest();
   marketLoad?.controller.abort();
@@ -377,8 +390,9 @@ async function openWorkspace(live, marketId, savedSession) {
   periodLoad?.controller.abort();
   ++loadVersion;
   loadBusy = randomBusy = false;
-  const recent = savedSession || [...sessions.values()].filter(item =>
-    !!item.live === live && (!marketId || item.marketId === marketId)
+  if (marketId && !availableMarket(marketId)) marketId = undefined;
+  const recent = [...sessions.values()].filter(item =>
+    !!item.live === live && availableMarket(item.marketId) && (!marketId || item.marketId === marketId)
   ).sort((a, b) => b.updated - a.updated)[0];
   if (recent) {
     if (s === recent) { chart.setTool('trend'); setView('terminal'); }
@@ -404,8 +418,8 @@ async function openWorkspace(live, marketId, savedSession) {
   const retry = elements('workspaceNotice').querySelector('[data-action=retryWorkspace]');
   retry.hidden = true;
   try {
-    const signal = AbortSignal.any([request.controller.signal, AbortSignal.timeout(live ? 20000 : 30000)]);
-    await startFeed({ marketId:id, kind:defaultKind(id), base:'5m', live, archiveYear:'auto', signal });
+    const signal = AbortSignal.any([request.controller.signal, AbortSignal.timeout(32000)]);
+    await startFeed({ marketId:id, kind:defaultKind(id), base:'5m', live, preferCompleteWindow:true, archiveYear:'auto', signal });
   } catch (error) {
     if (workspaceRequest !== request) return;
     elements('workspaceNoticeTitle').textContent = humanName(byId(id).name) + (live ? '行情暂不可用' : '历史数据暂不可用');
@@ -420,7 +434,7 @@ async function openWorkspace(live, marketId, savedSession) {
 }
 async function switchMarket(id, requestedPeriod) {
   const target = byId(id);
-  if (!target || !s) return;
+  if (!availableMarket(id) || !s) return;
   const display = requestedPeriod || s.feed?.preferredDisplay || effectivePeriod(s.period);
   if (marketLoad?.id === id && marketLoad.display === display) return;
   periodLoad?.controller.abort();
@@ -470,10 +484,10 @@ async function switchMarket(id, requestedPeriod) {
   notify('正在打开' + name + (live ? '最新行情…' : '历史回放…'));
   const base = ['1D', '1W', '1M', '1Q', '1Y'].includes(display) ? '1D' :
     ['1m', '3m'].includes(display) ? '1m' : '5m';
-  const options = { marketId: id, kind, base, period: display === base ? 'BASE' : display, archiveYear: year };
+  const options = { marketId: id, kind, base, period: display === base ? 'BASE' : display, archiveYear: year, preferCompleteWindow:!requestedPeriod };
   async function open(useLive) {
     request.version = loadVersion + 1;
-    const signal = useLive ? AbortSignal.any([request.controller.signal, AbortSignal.timeout(18000)]) :
+    const signal = useLive ? AbortSignal.any([request.controller.signal, AbortSignal.timeout(32000)]) :
       request.controller.signal;
     await startFeed({ ...options, live: useLive, signal });
   }
@@ -545,7 +559,7 @@ function historicalCard(id, active) {
   return cardRanges.get(key);
 }
 function renderMarkets() {
-  const ids = ['csi1000', 'csi500', 'btcPerp', 'ndx', 'csi300'];
+  const ids = [...watchlistIds];
   const pending = marketLoad?.origin === s ? marketLoad : null;
   const activeId = pending?.id || s.marketId;
   if (!ids.includes(activeId)) ids[ids.length - 1] = activeId;
@@ -614,17 +628,6 @@ function writeOhlc(bar) {
       )
       .join('');
 }
-function applyBoardQuote(session, quote) {
-  if (session.feed?.historySource !== '新浪财经') return applyLiveQuote(session, quote);
-  // Keep the secondary feed's OHLC intact. Only Eastmoney marks the account.
-  const history = session.customBars;
-  session.customBars = [];
-  try {
-    return applyLiveQuote(session, quote);
-  } finally {
-    session.customBars = history;
-  }
-}
 function sourceTimeForFill(time) {
   const stamp = (x) => (typeof x === 'number' ? x : Date.parse(x) / 1000);
   let lo = 0,
@@ -636,8 +639,26 @@ function sourceTimeForFill(time) {
   }
   return visible[Math.max(0, lo - 1)]?.time ?? time;
 }
+let aggregateTail;
+function visibleCandles() {
+  if (!s.live || s.period === 'BASE') {
+    aggregateTail = null;
+    return s.period === 'BASE' ? visible : periodBars(visible, s.period, market);
+  }
+  // Quotes and official stream updates only change the active candle. Aggregate that
+  // bucket again, while historical reloads get a fresh array and rebuild all buckets.
+  const reuse = aggregateTail?.source === bars && aggregateTail.period === s.period &&
+    visible.length >= aggregateTail.sourceCount;
+  const from = reuse ? aggregateTail.start : 0;
+  const tail = periodBars(reuse ? visible.slice(from) : visible, s.period, market);
+  const result = reuse ? [...aggregateTail.result.slice(0, -1), ...tail] : tail;
+  let start = visible.length - 1;
+  while (start > from && visible[start].time !== result.at(-1).time) start--;
+  aggregateTail = {source:bars, period:s.period, start, sourceCount:visible.length, result};
+  return result;
+}
 function renderChart() {
-  aggregated = periodBars(visible, s.period, market);
+  aggregated = visibleCandles();
   const a = s.account,
     p = a.position;
   const levels = [];
@@ -660,6 +681,7 @@ function renderChart() {
   }));
   chart.update(aggregated, {
     marketId: s.id,
+    liveSeries: s.live ? bars : null,
     timeframe: s.period === 'BASE' ? s.base : s.period,
     timeZone: market.timeZone,
     type: 'candles',
@@ -937,10 +959,24 @@ function renderPlay() {
     const remaining = Math.max(0, activeDays.length - 1 - activeDays.indexOf(date));
     clock.textContent = '回放 ' + fmtTime(bars[s.cursor].time, market.timeZone) + (market.timeZone === 'UTC' ? ' UTC' : '') + '　·　后续 ' + remaining + ' 个交易日';
   }
+  elements('liveHistoryRange').hidden = !s.live;
+  if (s.live) {
+    const depth = s.feed.depth;
+    const first = depth?.firstDate || marketDay(bars[0].time, s.marketId);
+    const last = marketDay(bars.at(-1).time, s.marketId);
+    const summary = depth && depth.quoteDate !== s.liveQuote.tradeDate ? '正在核对新交易日的历史范围'
+      : depth?.complete ? '前 ' + requestedTradeDays + ' 个交易日'
+      : depth ? '已取得 ' + depth.completeDays + ' / ' + requestedTradeDays + ' 个完整交易日'
+      : '历史范围待核实';
+    elements('liveHistoryDates').textContent = summary + '　·　' + first + ' 至 ' + last;
+    elements('liveHistoryRange').querySelector('[data-action=showHistoryWindow]').disabled = bars.length < 2;
+    elements('dailyHistoryWindow').hidden = !depth || depth.complete || s.base === '1D';
+  }
   if (s.live)
     elements('feedMeta').innerHTML =
       (s.account.contract && domestic(s.marketId) ? '公开行情或延时15分钟 · ' : '') +
       (refreshIssue ? esc(refreshIssue) + ' · ' : '') +
+      (s.feed.resolutionNote ? esc(s.feed.resolutionNote) + ' · ' : '') +
       (s.feed.limitedPeriod === effectivePeriod(s.period) ? '按现有样本合成 · ' : '') +
       (s.feed.quoteOnly ? (market.continuous ? '按收到的成交开始绘图 · ' : '仅有当日行情 · ') : s.feed.historyCached ? '使用本机历史缓存 · ' : '') +
       '报价 ' +
@@ -1051,7 +1087,7 @@ function play() {
   timer = setInterval(step, 1100 / Number(s.speed || 1));
   renderPlay();
 }
-function setView(next) {
+function setView(next, journalSession = s) {
   stop();
   cleanJournal?.();
   cleanJournal = null;
@@ -1067,25 +1103,29 @@ function setView(next) {
     renderTradeHistory(elements('history'), sessions, s);
   } else {
     elements('chartPanel').classList.remove('expanded');
+    const readOnly = !availableMarket(journalSession.marketId);
+    const journalBars = readOnly ? getBars(journalSession).slice(0, journalSession.cursor + 1) : visible;
     const archives = [...sessions.values()]
-      .filter((n) => n.id !== s.id)
+      .filter((n) => n.id !== journalSession.id)
       .sort((a, b) => b.updated - a.updated)
       .map((n) => ({
         id: n.id,
         label: n.customName || (n.base === '1D' ? '日线' : n.base) + '训练',
         marketName: displayMarket(n).name,
+        readOnly: !availableMarket(n.marketId),
         date: new Date(n.updated).toISOString().slice(0, 10),
         returnPct: getSnapshot(n.account, n.account.lastPrice).returnPct,
       }));
     cleanJournal = renderJournal(elements('journal'), {
-      session: s,
-      market,
-      bars: visible,
-      bar: s.live ? { ...bars[s.cursor], close: markBar().close, time: markBar().time } : bars[s.cursor],
+      session: journalSession,
+      market: readOnly ? displayMarket(journalSession) : market,
+      bars: journalBars,
+      bar: journalSession.live ? tradingBar(journalSession, journalBars.at(-1)) : journalBars.at(-1),
+      readOnly,
       onSave: async () => {
         if (!(await save())) throw Error('笔记尚未写入浏览器存储');
       },
-      onRetry: () => {
+      onRetry: readOnly ? undefined : () => {
         restartAt(s.live ? Math.max(0, bars.length - 61) : s.start);
         notify('已从相同数据重新开始，原训练已存档');
       },
@@ -1093,6 +1133,7 @@ function setView(next) {
       onRestore: (id) => {
         const chosen = sessions.get(id);
         if (!chosen) return;
+        if (!availableMarket(chosen.marketId)) return setView('journal', chosen);
         chosen.historicalHome = true;
         activate(chosen);
       },
@@ -1101,7 +1142,8 @@ function setView(next) {
   }
 }
 window.addEventListener('hashchange', () => {
-  if (location.hash === '#live') void openWorkspace(true);
+  if (location.hash === '#live/csi1000') void openWorkspace(true, 'csi1000');
+  else if (location.hash === '#live') void openWorkspace(true);
   else if (location.hash === '#replay' || location.hash === '#bitcoin') void openWorkspace(false, location.hash === '#bitcoin' ? 'btcPerp' : undefined);
   else if (s && ['#terminal', '#history', '#journal'].includes(location.hash)) {
     clearWorkspaceRequest();
@@ -1354,7 +1396,7 @@ async function choosePeriod(period) {
         { '3m': '1m', '10m': '5m', '2H': '1H', '4H': '1H', '1W': '1D', '1M': '1D', '1Q': '1D', '1Y': '1D' }[
           desired
         ] || desired;
-      if (['5m', '10m', '15m', '30m', '1H', '2H', '4H'].includes(desired) && s.base === '5m') source = '5m';
+      if (['5m', '10m', '15m', '30m', '1H', '2H', '4H'].includes(desired) && s.base === '5m' && s.feed.depth?.complete) source = '5m';
       if (source !== s.base) {
         const controller = new AbortController();
         periodLoad = { session: s, display: desired, version, controller };
@@ -1370,8 +1412,8 @@ async function choosePeriod(period) {
         notify('正在读取' + (baseNames[baseIDs.indexOf(desired)] || desired) + '行情…');
         const feed = await loadChartFeed(s.marketId, source, {
           contract: s.feed.kind === 'future' ? s.feed.symbol : 'index',
-          limit: source === '1D' ? 5000 : 720,
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+          limit: source === '1D' ? 5000 : 720, tradeDays: requestedTradeDays,
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(28000)]),
         });
         if (version !== loadVersion || s !== instance || !s.live) return;
         if (feed.bars.length < 2) throw Error('此周期可用的历史行情不足。');
@@ -1381,11 +1423,14 @@ async function choosePeriod(period) {
         s.customBars = feed.bars;
         s.feed.quoteOnly = false;
         s.feed.historyCached = false;
+        s.feed.depth = feed.depth;
+        s.lastHistoryFetch = Date.now();
         s.feed.historySource = feed.historySource || quoteSource(s.marketId);
         const latest = (s.liveQuote.tradeTimeMs ?? s.liveQuote.time * 1000) > (feed.quote.tradeTimeMs ?? feed.quote.time * 1000)
           || (market.continuous && s.liveQuote.sequence > feed.quote.sequence) ? s.liveQuote : feed.quote;
         if (market.continuous ? isFreshBitcoinQuote(s.marketId, latest) : stockQuoteState(s, latest) === 'fresh')
-          applyBoardQuote(s, latest);
+          applyLiveQuote(s, latest);
+        updateQuoteCandle(s, latest);
         if (market.continuous) startBitcoinStream();
         bars = s.customBars;
         s.cursor = bars.length - 1;
@@ -1400,6 +1445,7 @@ async function choosePeriod(period) {
         frameChoices = timeframeOptions(source, bars, market.region);
       }
       delete s.feed.limitedPeriod;
+      delete s.feed.resolutionNote;
       s.period = desired === s.base ? 'BASE' : desired;
     } else {
       if (!frameChoices.some((x) => x.id === period)) return;
@@ -1518,6 +1564,7 @@ async function startFeed({
   period = 'BASE',
   kind = 'future',
   live = true,
+  preferCompleteWindow = false,
   archiveYear = selectedArchiveYear(),
   signal,
   initialCash,
@@ -1525,6 +1572,7 @@ async function startFeed({
   slippageBps = 2,
   allowShort = true,
 }) {
+  if (!availableMarket(marketId)) throw Error('该品种已停止训练。');
   const version = ++loadVersion;
   loadBusy = true;
   elements('todayBtn').textContent = '正在取行情…';
@@ -1544,12 +1592,14 @@ async function startFeed({
       return;
     }
     const request = {
+      tradeDays: requestedTradeDays,
       contract: kind === 'future' ? 'active' : 'index',
       limit: base === '1D' ? 5000 : 720,
       signal,
     };
     let dataset,
       quoteOnly = false,
+      resolutionNote = '',
       desiredBase = base;
     try {
       dataset = await loadChartFeed(marketId, base, request);
@@ -1589,7 +1639,9 @@ async function startFeed({
           } catch { signal?.throwIfAborted(); }
         }
         if (daily?.bars.length >= 30) {
+          resolutionNote = (baseNames[baseIDs.indexOf(base)] || base) + ' K 线暂时无法取得，已显示日线';
           base = '1D';
+          period = 'BASE';
           dataset = daily;
           rememberHistory(marketId, base, daily);
         } else {
@@ -1619,6 +1671,25 @@ async function startFeed({
     }
     signal?.throwIfAborted();
     if (version !== loadVersion) return;
+    if (preferCompleteWindow && !dataset.depth?.complete && base === '5m' &&
+        ['ndx', 'spx', 'hsi'].includes(marketId)) {
+      const requested = period === 'BASE' ? '5m' : period;
+      const alternative = marketId === 'hsi' ? '1D' : ['30m','1H'].includes(requested) ? requested : '15m';
+      try {
+        const wider = await loadChartFeed(marketId, alternative, {...request, limit:alternative === '1D' ? 5000 : 720});
+        signal?.throwIfAborted();
+        if (version !== loadVersion) return;
+        if (wider.depth?.complete && wider.symbol === dataset.symbol) {
+          dataset = wider;
+          base = alternative;
+          period = 'BASE';
+          quoteOnly = false;
+          resolutionNote = '5 分钟历史不足 20 个交易日，已显示' + (alternative === '1D' ? '日线' : baseNames[baseIDs.indexOf(alternative)] + ' K 线');
+          rememberHistory(marketId, base, wider);
+        }
+      } catch { signal?.throwIfAborted(); }
+    }
+    if (version !== loadVersion) return;
     if (kind === 'future' && dataset.quote) watch.set(marketId, { quote: dataset.quote });
     const contract = dataset.contract
       ? { ...dataset.contract, maintenanceRate: dataset.contract.exchangeMarginRate }
@@ -1627,6 +1698,8 @@ async function startFeed({
       kind,
       quoteOnly,
       desiredBase,
+      depth: dataset.depth,
+      resolutionNote,
       historySource: dataset.historySource || quoteSource(marketId),
       historyCached: !!dataset.historyCached,
       symbol: dataset.symbol,
@@ -1745,7 +1818,7 @@ function startBitcoinStream() {
     initialQuote: session.liveQuote,
     onQuote(quote) {
       if (s !== session || !isFreshBitcoinQuote(session.marketId, quote)) return;
-      const result = applyBoardQuote(session, quote);
+      const result = applyLiveQuote(session, quote);
       if (!result.changed) return;
       bars = session.customBars;
       session.cursor = bars.length - 1;
@@ -1770,86 +1843,104 @@ function startBitcoinStream() {
   });
 }
 const restoringDepth = new WeakMap();
-async function refreshBitcoinHistory(session, force = false) {
-  if (restoringDepth.get(session) === session.base || (!force && Date.now() - (session.lastHistoryFetch || 0) < 90000)) return;
-  const base = session.base;
+const lastDepthAttempt = new WeakMap();
+async function refreshChartHistory(session, force) {
+  const base = session.feed.quoteOnly ? session.feed.desiredBase : session.base;
+  const initialBase = session.base;
+  const depth = session.feed.depth;
+  const needsWindow = !depth?.complete || depth.quoteDate !== session.liveQuote.tradeDate;
+  const recentAttempt = lastDepthAttempt.get(session);
+  const changedDay = recentAttempt?.date !== session.liveQuote.tradeDate;
+  if (restoringDepth.get(session) === base) return;
+  if (!force && !changedDay && recentAttempt.base === base && Date.now() - recentAttempt.time < 90000) return;
+  if (!force && !needsWindow && Date.now() - (session.lastHistoryFetch || 0) < 90000) return;
+  lastDepthAttempt.set(session, {base, date:session.liveQuote.tradeDate, time:Date.now()});
   restoringDepth.set(session, base);
   try {
-    const data = await loadChartFeed(session.marketId, base, {limit:720, signal:AbortSignal.timeout(9000)});
-    if (s !== session || s.base !== base || !data.bars.length) return;
-    const epoch = (bar) => typeof bar.time === 'number' ? bar.time : Date.parse(bar.time) / 1000;
-    const last = epoch(data.bars.at(-1));
-    const newerLocal = session.liveQuote.sequence > data.quote.sequence;
-    const tail = session.customBars.filter(bar => epoch(bar) > last || (epoch(bar) === last && newerLocal));
-    session.customBars = data.bars;
-    for (const bar of tail) applyBitcoinCandle(session, {
-      marketId:session.marketId, base, bar, asOfMs:data.quote.tradeTimeMs,
+    const data = await loadChartFeed(session.marketId, base, {
+      contract: session.feed.kind === 'future' ? session.feed.symbol : 'index',
+      limit: base === '1D' ? 5000 : 720,
+      tradeDays: needsWindow ? requestedTradeDays : undefined,
+      signal: AbortSignal.timeout(28000),
     });
-    session.feed.quoteOnly = false;
-    session.feed.historyCached = false;
-    session.feed.historySource = data.historySource;
+    if (s !== session || session.base !== initialBase || !data.bars.length || data.symbol !== session.feed.symbol) return;
+    const changingBase = base !== initialBase;
+    // Preserve older candles when a regular tail refresh contains fewer points. Union by
+    // exchange opening time also retains the live interval if the provider only returns closed bars.
+    const existing = changingBase ? [] : session.customBars;
+    const verified = data.depth;
+    const cutoff = base !== '1D' && verified?.complete ? verified.firstDate : null;
+    const earliest = cutoff ? Date.parse(cutoff + 'T00:00:00Z') / 1000 - 86400 : 0;
+    const rows = new Map();
+    for (const candle of existing) {
+      if (cutoff && (candle.time < earliest || (candle.time < earliest + 172800 && marketDay(candle.time, s.marketId) < cutoff))) continue;
+      rows.set(candle.time, candle);
+    }
+    for (const candle of data.bars) rows.set(candle.time, candle);
+    const latestLocal = existing.at(-1);
+    const incoming = data.bars.at(-1);
+    const observed = session.liveQuote;
+    const incomingQuoteTime = data.quote.tradeTimeMs ?? data.quote.time * 1000;
+    const quoteTime = observed.tradeTimeMs ?? observed.time * 1000;
+    if (latestLocal?.time === incoming.time && quoteTime > incomingQuoteTime) {
+      rows.set(incoming.time, {...incoming, high:Math.max(incoming.high, latestLocal.high),
+        low:Math.min(incoming.low, latestLocal.low), close:latestLocal.close,
+        volume:Math.max(incoming.volume, latestLocal.volume)});
+    }
+    session.base = base;
+    session.customBars = [...rows.values()].sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+    if (quoteTime >= incomingQuoteTime) updateQuoteCandle(session, observed);
     bars = session.customBars;
     session.cursor = bars.length - 1;
+    session.start = Math.min(session.start, session.cursor);
+    if (changingBase) session.period = 'BASE';
+    session.feed.quoteOnly = false;
+    session.feed.historyCached = false;
+    session.feed.historySource = data.historySource || quoteSource(s.marketId);
+    if (verified) {
+      session.feed.depth = market.continuous || verified.complete ? verified : assessLiveDepth(
+        session.marketId, base, bars, verified.quoteDate, requestedTradeDays,
+        verified.calendarVerified ? verified.expectedDates : null,
+      );
+    }
     session.lastHistoryFetch = Date.now();
     frameChoices = timeframeOptions(base, bars, market.region);
-    paintLiveSoon();
-  } catch { /* The quote stream can continue while chart history is unavailable. */ }
+    if (changingBase && market.continuous) startBitcoinStream();
+    if (view === 'terminal' && !workspaceRequest) render();
+    void save();
+  } catch { /* Quotes continue independently while historical depth is unavailable. */ }
   finally { if (restoringDepth.get(session) === base) restoringDepth.delete(session); }
 }
 async function refreshLive(manual = false) {
   if (!s?.live) return;
-  if (market.continuous) { await refreshBitcoinHistory(s, manual); return; }
-  if (quoteBusy) return;
-  const instance = s,
-    sourceBase = s.base;
-  quoteBusy = true;
+  const instance = s;
+  void refreshChartHistory(instance, manual);
+  if (market.continuous || quoteBusy === instance) return;
+  quoteBusy = instance;
   try {
-    const options = { contract: s.feed.kind === 'future' ? s.feed.symbol : 'index' };
-    // Refresh actual candles after a suspended tab or a trading-day change.
-
-    const full = manual || !s.lastHistoryFetch || Date.now() - s.lastHistoryFetch > 90000;
-    let data = null;
-    const requestBase = s.feed.quoteOnly ? s.feed.desiredBase : sourceBase;
-    if (full) {
-      try {
-        data = await loadChartFeed(s.marketId, requestBase, {
-          ...options,
-          limit: requestBase === '1D' ? 5000 : 720,
-        });
-      } catch {}
-    }
-
-    if (s !== instance || s.base !== sourceBase) return;
-    const q = data?.quote || (await fetchMarketQuote(instance.marketId, options));
-    if (s !== instance || s.base !== sourceBase) return;
+    const q = await fetchMarketQuote(instance.marketId, {
+      contract: instance.feed.kind === 'future' ? instance.feed.symbol : 'index',
+      signal: AbortSignal.timeout(11000),
+    });
+    if (s !== instance || q.symbol !== instance.feed.symbol) return;
     lastQuoteCheck = Date.now();
     liveTransport = 'polling';
     const fresh = stockQuoteState(s, q) === 'fresh';
-    const result = fresh ? applyBoardQuote(s, q) : { changed:false, newFills:[] };
-    if (!fresh && q.time >= s.liveQuote.time) s.liveQuote = q;
-    recordLiveMark(s, result);
-    if (data && q.time >= s.liveQuote.time) {
-      s.customBars = data.bars;
-      s.lastHistoryFetch = Date.now();
-      rememberHistory(s.marketId, requestBase, data);
-      s.feed.historyCached = false;
-      s.feed.historySource = data.historySource || quoteSource(s.marketId);
-      if (s.feed.quoteOnly && data.bars.length > 1) {
-        s.base = requestBase;
-        s.period = 'BASE';
-        s.feed.quoteOnly = false;
-        frameChoices = timeframeOptions(s.base, s.customBars, market.region);
-      }
-    } else if (full) {
-      s.lastHistoryFetch = Date.now();
+    const previous = s.liveQuote;
+    const result = fresh ? applyLiveQuote(s, q) : {changed:false, newFills:[]};
+    if (!fresh && (q.time > previous.time || (q.time === previous.time && q.volume > previous.volume))) {
+      updateQuoteCandle(s, q, previous);
+      s.liveQuote = q;
     }
+    recordLiveMark(s, result);
     bars = s.customBars;
     s.cursor = bars.length - 1;
     s.feed.tradeDate = s.liveQuote.tradeDate;
+    if (s.liveQuote.tradeDate !== previous.tradeDate) void refreshChartHistory(s, false);
     refreshIssue = '';
-    if (view === 'terminal') render();
+    if (view === 'terminal' && !workspaceRequest) render();
     else if (result.newFills.length && view === 'history') renderTradeHistory(elements('history'), sessions, s);
-    if (result.changed || data) save();
+    if (result.changed || s.liveQuote !== previous) void save();
     if (manual) notify('已核对' + quoteSource(s.marketId) + '报价 · ' + fmtTime(s.liveQuote.time, market.timeZone));
   } catch (err) {
     if (s === instance) {
@@ -1860,7 +1951,7 @@ async function refreshLive(manual = false) {
       if (manual) notify(err.message);
     }
   } finally {
-    quoteBusy = false;
+    if (quoteBusy === instance) quoteBusy = null;
   }
 }
 let lastWatch = 0;
@@ -1868,7 +1959,7 @@ async function refreshWatch() {
   if (s?.feed && !s.live && !s.feed.anchored) return;
   if (Date.now() - lastWatch < 60000) return;
   lastWatch = Date.now();
-  const wanted = MARKETS.filter((m) => ['csi1000', 'csi500', 'btcPerp', 'ndx', 'csi300', s?.marketId].includes(m.id));
+  const wanted = trainingMarkets.filter((m) => watchlistIds.includes(m.id) || m.id === s?.marketId);
   for (const m of wanted) {
     try {
       const old = watch.get(m.id);
@@ -1936,8 +2027,9 @@ function context() {
   return {
     market,
     session: s,
-    markets: MARKETS,
+    markets: trainingMarkets,
     onNew: (config) => {
+      if (!availableMarket(config.marketId)) throw Error('该品种已停止训练。');
       if (config.kind === 'future' && domestic(config.marketId)) {
         config.contract = futuresTerms(config.marketId);
         if (!config.customBars) {
@@ -2062,6 +2154,22 @@ function action(key) {
       clearWorkspaceRequest();
       setView(key);
       break;
+    case 'showDailyWindow': {
+      const selected = s;
+      void choosePeriod('1D').then(() => {
+        if (s === selected && effectivePeriod(s.period) === '1D') action('showHistoryWindow');
+      });
+      break;
+    }
+    case 'showHistoryWindow': {
+      if (!s.live || !aggregated.length) break;
+      const first = s.feed.depth?.firstDate;
+      const idx = first ? aggregated.findIndex(bar => marketDay(bar.time, s.marketId) >= first) : 0;
+      // An aggregate spanning the first requested day can open before that date.
+      const from = idx < 0 ? 0 : idx > 0 && marketDay(aggregated[idx].time, s.marketId) !== first ? idx - 1 : idx;
+      chart.showRange(from);
+      break;
+    }
     case 'fit':
       chart.resetView();
       break;
@@ -2295,7 +2403,7 @@ try {
   }
   try {
     for (const [id, item] of JSON.parse(localStorage.getItem(watchStore) || '[]'))
-      if (byId(id) && item?.quote?.price && item.quote.tradeDate >= (watch.get(id)?.quote?.tradeDate || ''))
+      if (availableMarket(id) && item?.quote?.price && item.quote.tradeDate >= (watch.get(id)?.quote?.tradeDate || ''))
         watch.set(id, item);
   } catch {}
   const restored = applyRecovery(active);
@@ -2307,9 +2415,14 @@ try {
     (!restored.feed && !restored.customBars && !restored.periodSchema) ||
     (restored.feed?.archivePeriod?.year >= new Date().getFullYear()));
   const wanted = initialViewHash;
-  if (wanted === '#live') await openWorkspace(true);
+  if (wanted === '#live/csi1000') await openWorkspace(true, 'csi1000');
+  else if (wanted === '#live') await openWorkspace(true);
   else if (wanted === '#bitcoin') await openWorkspace(false, 'btcPerp');
   else if (wanted === '#replay') await openWorkspace(false);
+  else if (restored && !availableMarket(restored.marketId)) {
+    const recordsView = wanted === '#history' || wanted === '#journal';
+    await openWorkspace(recordsView ? false : !!restored.live);
+  }
   else if (restored && !oldLanding) await activate(restored);
   else if (['#history', '#journal', '#terminal'].includes(wanted) || oldLanding) await openWorkspace(false);
   else await openWorkspace(true);

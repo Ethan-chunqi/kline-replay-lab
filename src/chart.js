@@ -1,4 +1,4 @@
-import { attachDrawings } from './drawing-layer.js?v=20261124trend3';
+import { attachDrawings } from './drawing-layer.js?v=20261125gesture1';
 import {
   CandlestickSeries,
   ColorType,
@@ -7,6 +7,7 @@ import {
   CrosshairMode,
   LineStyle,
   TickMarkType,
+  TrackingModeExitMode,
 } from '../vendor/lightweight-charts/lightweight-charts.min.js';
 
 const PALETTES = {
@@ -153,8 +154,9 @@ export function createTradingChart(container, callbacks = {}) {
       tickMarkMaxCharacterLength: 7,
     },
     localization: { locale: 'zh-CN' },
+    trackingMode: { exitMode: TrackingModeExitMode.OnTouchEnd },
     handleScale: { mouseWheel: true },
-    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScroll: { mouseWheel: true, pressedMouseMove: false, horzTouchDrag: true, vertTouchDrag: false },
   });
 
   const priceSeries = chart.addSeries(CandlestickSeries, {
@@ -171,14 +173,14 @@ export function createTradingChart(container, callbacks = {}) {
   let bars = [],
     rowIndex = new Map(),
     options = {};
-  let activeMarket, displayKey, levelsKey, lastPriceColor;
+  let activeMarket, displayKey, levelsKey, lastPriceColor, lastSource, lastTime;
+  let lastCount = 0;
   let ready = false,
     destroyed = false,
     lastWidth = root.clientWidth;
   let priceLevels = [];
   const timeAxis = chart.timeScale();
   const priceAxis = priceSeries.priceScale();
-  let pan = null;
 
   function inPane(event) {
     const bounds = root.getBoundingClientRect();
@@ -187,73 +189,29 @@ export function createTradingChart(container, callbacks = {}) {
       y = event.clientY - bounds.top;
     return x >= 0 && x < width && y >= 0 && y < height && !event.target.closest('a');
   }
+  function startPan() {
+    const range = timeAxis.getVisibleLogicalRange(), prices = priceAxis.getVisibleRange();
+    const top = priceSeries.coordinateToPrice(0), next = priceSeries.coordinateToPrice(1);
+    if (!range || !prices || top == null || next == null) return null;
+    const spacing = timeAxis.options().barSpacing, firstTime = bars[0].time;
+    let movingPrice = false;
+    return (dx, dy) => {
+      const firstIndex = rowIndex.get(isoKey(firstTime)) ?? 0;
+      const shift = firstIndex - dx / spacing;
+      timeAxis.setVisibleLogicalRange({ from: range.from + shift, to: range.to + shift });
+      // Keep automatic price scaling on an ordinary horizontal drag.
+      movingPrice ||= Math.abs(dy) >= 8 && Math.abs(dy) > Math.abs(dx) * 0.35;
+      if (movingPrice) {
+        const priceShift = dy * (top - next);
+        priceAxis.setVisibleRange({ from: prices.from + priceShift, to: prices.to + priceShift });
+      }
+    };
+  }
   const drawing = attachDrawings({
-    root, chart, priceSeries, callbacks, inPane,
+    root, chart, priceSeries, callbacks, inPane, startPan,
     data: () => bars, row: (time) => rowIndex.get(isoKey(time)),
     precision: () => options.precision ?? 2, palette: () => colors, ready: () => ready,
   });
-  function finishPan() {
-    if (!pan) return;
-    const { id } = pan;
-    pan = null;
-    root.removeAttribute('data-panning');
-    if (root.hasPointerCapture(id)) root.releasePointerCapture(id);
-  }
-  root.addEventListener(
-    'pointerdown',
-    (event) => {
-      if (event.button !== 2 || event.pointerType !== 'mouse' || !ready || !inPane(event)) return;
-      const range = priceAxis.getVisibleRange();
-      const top = priceSeries.coordinateToPrice(0),
-        next = priceSeries.coordinateToPrice(1);
-      if (!range || top == null || next == null) return;
-      event.preventDefault();
-      pan = {
-        id: event.pointerId,
-        x: event.clientX,
-        y: event.clientY,
-        offset: timeAxis.scrollPosition(),
-        spacing: timeAxis.options().barSpacing,
-        range,
-        pricePerPixel: top - next,
-        movedY: false,
-      };
-      root.setPointerCapture(event.pointerId);
-      root.setAttribute('data-panning', '');
-      root.focus({ preventScroll: true });
-    },
-    true,
-  );
-  root.addEventListener('pointermove', (event) => {
-    if (!pan || event.pointerId !== pan.id) return;
-    if (!(event.buttons & 2)) return finishPan();
-    const dx = event.clientX - pan.x,
-      dy = event.clientY - pan.y;
-    if (!pan.dragged && Math.max(Math.abs(dx), Math.abs(dy)) < 3) return;
-    pan.dragged = true;
-    timeAxis.scrollToPosition(pan.offset - dx / pan.spacing, false);
-    if (Math.abs(dy) >= 3 || pan.movedY) {
-      pan.movedY = true;
-      const shift = dy * pan.pricePerPixel;
-      priceAxis.setVisibleRange({ from: pan.range.from + shift, to: pan.range.to + shift });
-    }
-  });
-  for (const eventName of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    root.addEventListener(eventName, (event) => {
-      if (pan?.id !== event.pointerId) return;
-      const singleClick = eventName === 'pointerup' && !pan.dragged && drawing.selecting() &&
-        Math.max(Math.abs(event.clientX - pan.x), Math.abs(event.clientY - pan.y)) < 3;
-      finishPan();
-      if (singleClick) {
-        const bounds = root.getBoundingClientRect();
-        drawing.selectAt(event.clientX - bounds.left, event.clientY - bounds.top);
-      }
-    });
-  }
-  root.addEventListener('contextmenu', (event) => {
-    if (pan || (event.button === 2 && inPane(event))) event.preventDefault();
-  });
-  window.addEventListener('blur', finishPan);
   root.addEventListener('keydown', (event) => {
     if (event.target !== root || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -317,7 +275,7 @@ export function createTradingChart(container, callbacks = {}) {
   document.addEventListener('wavelab-theme', applyTheme);
 
   function resetView() {
-    finishPan();
+    drawing.cancelGesture();
     if (!bars.length) return;
     const mobile = root.clientWidth < 550;
     const count = Math.max(
@@ -331,14 +289,28 @@ export function createTradingChart(container, callbacks = {}) {
     });
     chart.priceScale('right', 0).setAutoScale(true);
   }
+  function showRange(firstIndex) {
+    if (!bars.length) return;
+    const count = bars.length - firstIndex;
+    const scale = chart.timeScale();
+    scale.applyOptions({minBarSpacing: Math.max(0.001, Math.min(1.5, scale.width() / (count + 5)))});
+    scale.setVisibleLogicalRange({from: Math.max(-0.5, firstIndex - 0.5), to: bars.length + 1});
+    chart.priceScale('right', 0).setAutoScale(true);
+  }
   function update(visibleBars, next = {}) {
     if (destroyed) return;
     options = { precision: 2, ...options, ...next };
     options.precision = Math.max(0, Math.min(8, Math.trunc(options.precision) || 0));
     const marketKey = [options.marketId, options.timeframe].join('|');
-    const oldLast = bars.at(-1);
+    const oldTime = lastTime, oldCount = lastCount;
+    // Live price events only change the last candle or append to the same backing series.
+    // A historical refresh replaces the backing array and must update the entire chart.
+    const incremental = next.liveSeries && next.liveSeries === lastSource && oldCount > 0 && marketKey === activeMarket
+      && (visibleBars.length === oldCount || visibleBars.length === oldCount + 1)
+      && visibleBars[oldCount - 1]?.time === oldTime;
+    lastSource = next.liveSeries;
     const prevRange = chart.timeScale().getVisibleLogicalRange();
-    const distanceFromEdge = prevRange ? bars.length - 1 - prevRange.to : 0;
+    const distanceFromEdge = prevRange ? oldCount - 1 - prevRange.to : 0;
     const changedMarket = activeMarket !== marketKey;
     if (changedMarket) {
       levelsKey = undefined;
@@ -346,7 +318,9 @@ export function createTradingChart(container, callbacks = {}) {
     }
     ready = false;
     bars = visibleBars;
-    rowIndex = new Map(bars.map((bar, i) => [isoKey(bar.time), i]));
+    if (incremental) {
+      if (bars.length > oldCount) rowIndex.set(isoKey(bars.at(-1).time), bars.length - 1);
+    } else rowIndex = new Map(bars.map((bar, i) => [isoKey(bar.time), i]));
     const key = [options.precision, options.timeZone, typeof bars[0]?.time].join('|');
     if (displayKey !== key) {
       displayKey = key;
@@ -360,21 +334,28 @@ export function createTradingChart(container, callbacks = {}) {
       });
     }
     const latest = bars.at(-1);
+    lastTime = latest?.time;
+    lastCount = bars.length;
     const priceColor = latest && latest.close < latest.open ? colors.down : colors.up;
     if (lastPriceColor !== priceColor) {
       // Set explicitly so a hollow candle never gives the last-price label a white fill.
       priceSeries.applyOptions({ priceLineColor: priceColor });
       lastPriceColor = priceColor;
     }
-    priceSeries.setData(bars.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+    const priceBar = ({time, open, high, low, close}) => ({time, open, high, low, close});
+    if (incremental) {
+      priceSeries.update(priceBar(bars[oldCount - 1]));
+      if (bars.length > oldCount) priceSeries.update(priceBar(latest));
+    } else priceSeries.setData(bars.map(priceBar));
     renderMarkers();
     displayLevels(options.levels);
     drawing.update(next.drawings, changedMarket);
-    if (changedMarket || !prevRange || !oldLast) resetView();
-    else if (prevRange && bars.length) {
-      const lastIndex = rowIndex.get(isoKey(oldLast.time));
+    if (changedMarket || !prevRange || !oldCount) resetView();
+    else if (bars.length && (!incremental || oldCount !== bars.length)) {
+      const lastIndex = rowIndex.get(isoKey(oldTime));
       const advanced = lastIndex === undefined ? 0 : bars.length - 1 - lastIndex;
-      const shift = advanced > 0 && distanceFromEdge < 2 ? advanced : 0;
+      const prepended = lastIndex === undefined ? 0 : lastIndex - (oldCount - 1);
+      const shift = prepended + (advanced > 0 && distanceFromEdge < 2 && !drawing.interacting() ? advanced : 0);
       chart.timeScale().setVisibleLogicalRange({ from: prevRange.from + shift, to: prevRange.to + shift });
     }
     ready = true;
@@ -403,9 +384,7 @@ export function createTradingChart(container, callbacks = {}) {
     if (destroyed) return;
     destroyed = true;
     ready = false;
-    finishPan();
     drawing.destroy();
-    window.removeEventListener('blur', finishPan);
     document.removeEventListener('wavelab-theme', applyTheme);
     observer.disconnect();
     chart.remove();
@@ -414,6 +393,7 @@ export function createTradingChart(container, callbacks = {}) {
   return {
     update,
     resetView,
+    showRange,
     zoom,
     setTool: drawing.setTool,
     cancelDrawing: drawing.cancelDrawing,
