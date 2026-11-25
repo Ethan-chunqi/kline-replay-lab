@@ -1831,6 +1831,10 @@ html[data-theme='dark'] #toast {
   border-color: var(--accent-line);
   box-shadow: 0 8px 30px rgb(0 0 0 / 35%);
 }
+#plot [data-drawing-tool] {
+  -webkit-user-select: none;
+  user-select: none;
+}
 #plot [data-panning],
 #plot [data-panning] * {
   cursor: grabbing !important;
